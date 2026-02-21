@@ -118,16 +118,6 @@ export default function BiasAnalysis() {
     }
   }, [toast]);
 
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) analyzeFile(file);
-  }, [analyzeFile]);
-
-  const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(true); }, []);
-  const onDragLeave = useCallback(() => setDragOver(false), []);
-
   const runAnalysis = async () => {
     if (trades.length < 5) {
       toast({ title: 'Not enough data', description: 'Upload at least 5 trades to run analysis.', variant: 'destructive' });
@@ -218,33 +208,6 @@ export default function BiasAnalysis() {
           <h1 className="text-3xl font-display font-bold">Bias Analysis</h1>
           <p className="text-muted-foreground mt-1">Upload a CSV or use saved trades to detect behavioral biases</p>
         </div>
-
-        {/* File upload zone */}
-        <Card className={`glass-card border-2 border-dashed transition-colors ${dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/25'}`}>
-          <CardContent className="pt-6">
-            <div
-              onDrop={onDrop}
-              onDragOver={onDragOver}
-              onDragLeave={onDragLeave}
-              className="flex flex-col items-center justify-center rounded-lg border border-dashed border-muted-foreground/25 bg-muted/20 py-12 px-6"
-            >
-              <Upload className="w-10 h-10 text-muted-foreground mb-3" />
-              <p className="text-sm font-medium text-foreground mb-1">Drop your CSV here or click to browse</p>
-              <p className="text-xs text-muted-foreground mb-4">Headers: Timestamp, Buy/Sell, Asset, Quantity, Price, P/L, Balance</p>
-              <input
-                type="file"
-                accept=".csv"
-                className="hidden"
-                id="csv-upload"
-                onChange={e => { const f = e.target.files?.[0]; if (f) analyzeFile(f); e.target.value = ''; }}
-              />
-              <Button variant="secondary" disabled={uploading} onClick={() => document.getElementById('csv-upload')?.click()}>
-                {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FileSpreadsheet className="w-4 h-4 mr-2" />}
-                {uploading ? 'Analyzing…' : 'Choose CSV'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
 
         {/* Bias Score radial gauge */}
         {(apiResult || displayResults.length > 0) && (
