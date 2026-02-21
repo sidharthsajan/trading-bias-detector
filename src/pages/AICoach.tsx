@@ -1,19 +1,20 @@
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { MessageSquare, Send, Loader2, Brain, Trash2 } from 'lucide-react';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { MessageSquare, Send, Loader2, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-
-interface ChatMessage {
-  id?: string;
-  role: 'user' | 'assistant';
-  content: string;
-  created_at?: string;
-}
+import {
+  AI_COACH_AVATAR_URL,
+  AI_COACH_NAME,
+  ChatMessage,
+  clearCoachMessages,
+  fetchCoachMessages,
+  sendCoachMessage,
+} from '@/lib/aiCoach';
 
 export default function AICoach() {
   const { user } = useAuth();
@@ -22,73 +23,68 @@ export default function AICoach() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [clearing, setClearing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const fetchMessages = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const data = await fetchCoachMessages(user.id);
+      setMessages(data);
+    } catch (error: any) {
+      toast({ title: 'Failed to load chat history', description: error?.message || 'Unknown error', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  }, [user, toast]);
+
   useEffect(() => {
-    if (user) fetchMessages();
-  }, [user]);
+    if (!user) return;
+    void fetchMessages();
+  }, [user, fetchMessages]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, sending]);
 
-  const fetchMessages = async () => {
-    const { data } = await supabase
-      .from('chat_messages')
-      .select('*')
-      .eq('user_id', user!.id)
-      .order('created_at', { ascending: true });
-    setMessages((data || []).map((m: any) => ({ id: m.id, role: m.role, content: m.content, created_at: m.created_at })));
-    setLoading(false);
-  };
+  const onSend = async () => {
+    if (!user || !input.trim() || sending) return;
 
-  const sendMessage = async () => {
-    if (!input.trim() || sending) return;
-    const userMsg: ChatMessage = { role: 'user', content: input.trim() };
-    setMessages(prev => [...prev, userMsg]);
+    const prompt = input.trim();
+    const userMessage: ChatMessage = { role: 'user', content: prompt, created_at: new Date().toISOString() };
+    const historyWithLatest = [...messages, userMessage];
+
+    setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setSending(true);
 
-    // Save user message
-    await supabase.from('chat_messages').insert({ user_id: user!.id, role: 'user', content: userMsg.content });
-
-    // Get trading context
-    const { data: trades } = await supabase
-      .from('trades')
-      .select('*')
-      .eq('user_id', user!.id)
-      .order('timestamp', { ascending: false })
-      .limit(50);
-
-    const { data: biases } = await supabase
-      .from('bias_analyses')
-      .select('*')
-      .eq('user_id', user!.id);
-
     try {
-      const response = await supabase.functions.invoke('ai-coach', {
-        body: {
-          message: userMsg.content,
-          trades: trades || [],
-          biases: biases || [],
-          history: messages.slice(-10),
-        },
-      });
-
-      const aiContent = response.data?.reply || 'I apologize, I could not generate a response. Please try again.';
-      const aiMsg: ChatMessage = { role: 'assistant', content: aiContent };
-      setMessages(prev => [...prev, aiMsg]);
-
-      await supabase.from('chat_messages').insert({ user_id: user!.id, role: 'assistant', content: aiContent });
-    } catch {
-      toast({ title: 'Error', description: 'Failed to get AI response.', variant: 'destructive' });
+      const assistantMessage = await sendCoachMessage(user.id, prompt, historyWithLatest);
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error: any) {
+      toast({ title: 'Error', description: error?.message || 'Failed to get AI response.', variant: 'destructive' });
+      await fetchMessages();
+    } finally {
+      setSending(false);
     }
-    setSending(false);
   };
 
-  const clearChat = async () => {
-    await supabase.from('chat_messages').delete().eq('user_id', user!.id);
-    setMessages([]);
+  const clearChatHistory = async () => {
+    if (!user || clearing) return;
+    const confirmed = window.confirm('Clear all chat history with Laurent Ferreira? This action cannot be undone.');
+    if (!confirmed) return;
+
+    setClearing(true);
+    try {
+      await clearCoachMessages(user.id);
+      setMessages([]);
+      toast({ title: 'Chat history cleared' });
+    } catch (error: any) {
+      toast({ title: 'Clear failed', description: error?.message || 'Unknown error', variant: 'destructive' });
+    } finally {
+      setClearing(false);
+    }
   };
 
   return (
@@ -97,12 +93,17 @@ export default function AICoach() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-3xl font-display font-bold flex items-center gap-2">
-              <Brain className="w-8 h-8 text-primary" /> AI Trading Coach
+              <Avatar className="w-8 h-8 border border-border">
+                <AvatarImage src={AI_COACH_AVATAR_URL} alt={AI_COACH_NAME} />
+                <AvatarFallback>LF</AvatarFallback>
+              </Avatar>
+              {AI_COACH_NAME}
             </h1>
-            <p className="text-muted-foreground mt-1">Personalized guidance based on your trading patterns</p>
+            <p className="text-muted-foreground mt-1">Your behavioral trading coach with personalized guidance</p>
           </div>
-          <Button variant="outline" size="sm" onClick={clearChat}>
-            <Trash2 className="w-4 h-4 mr-1" /> Clear
+          <Button variant="outline" size="sm" onClick={clearChatHistory} disabled={clearing}>
+            {clearing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Trash2 className="w-4 h-4 mr-1" />}
+            Clear Chat History
           </Button>
         </div>
 
@@ -111,7 +112,7 @@ export default function AICoach() {
             {messages.length === 0 && !loading && (
               <div className="text-center py-16">
                 <MessageSquare className="w-16 h-16 text-muted-foreground/20 mx-auto mb-4" />
-                <h3 className="text-lg font-display font-semibold mb-2">Start a conversation</h3>
+                <h3 className="text-lg font-display font-semibold mb-2">Start a conversation with {AI_COACH_NAME}</h3>
                 <p className="text-muted-foreground max-w-md mx-auto">
                   Ask about your trading biases, get personalized tips, or discuss your trading psychology.
                 </p>
@@ -121,33 +122,36 @@ export default function AICoach() {
                     'How can I avoid revenge trading?',
                     'Analyze my risk management',
                     'Give me tips to improve discipline',
-                  ].map(q => (
+                  ].map((suggestion) => (
                     <button
-                      key={q}
-                      onClick={() => { setInput(q); }}
+                      key={suggestion}
+                      onClick={() => { setInput(suggestion); }}
                       className="px-3 py-1.5 rounded-lg bg-muted text-sm hover:bg-accent transition-colors"
                     >
-                      {q}
+                      {suggestion}
                     </button>
                   ))}
                 </div>
               </div>
             )}
 
-            {messages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            {messages.map((message, index) => (
+              <div key={message.id || index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[70%] rounded-2xl px-4 py-3 ${
-                  msg.role === 'user'
+                  message.role === 'user'
                     ? 'gradient-primary text-primary-foreground'
                     : 'bg-muted'
                 }`}>
-                  {msg.role === 'assistant' && (
+                  {message.role === 'assistant' && (
                     <div className="flex items-center gap-1.5 mb-1">
-                      <Brain className="w-3.5 h-3.5 text-primary" />
-                      <span className="text-xs font-medium text-primary">AI Coach</span>
+                      <Avatar className="w-4 h-4">
+                        <AvatarImage src={AI_COACH_AVATAR_URL} alt={AI_COACH_NAME} />
+                        <AvatarFallback>LF</AvatarFallback>
+                      </Avatar>
+                      <span className="text-xs font-medium text-primary">{AI_COACH_NAME}</span>
                     </div>
                   )}
-                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                 </div>
               </div>
             ))}
@@ -164,14 +168,19 @@ export default function AICoach() {
           <div className="p-4 border-t border-border">
             <div className="flex gap-2">
               <Textarea
-                placeholder="Ask your trading coach..."
+                placeholder={`Ask ${AI_COACH_NAME}...`}
                 value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    void onSend();
+                  }
+                }}
                 className="min-h-[44px] max-h-32 resize-none"
                 rows={1}
               />
-              <Button onClick={sendMessage} disabled={sending || !input.trim()} className="gradient-primary text-primary-foreground px-4">
+              <Button onClick={onSend} disabled={sending || !input.trim()} className="gradient-primary text-primary-foreground px-4">
                 <Send className="w-4 h-4" />
               </Button>
             </div>

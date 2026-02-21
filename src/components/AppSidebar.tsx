@@ -45,7 +45,7 @@ const analyticsItems: NavItem[] = [
 ];
 
 const workspaceItems: NavItem[] = [
-  { icon: MessageSquare, label: 'AI Coach', path: '/ai-coach' },
+  { icon: MessageSquare, label: 'Laurent Ferreira', path: '/ai-coach' },
   { icon: User, label: 'Settings', path: '/settings' },
 ];
 
