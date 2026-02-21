@@ -2,8 +2,12 @@ import { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllTradesForUser } from '@/lib/trades';
+import { calculateRiskProfile, runFullAnalysis, type Trade } from '@/lib/biasDetection';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Shield, TrendingUp, Zap, Brain, Heart, Target } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
+import { Shield, TrendingUp, Zap, Brain, Heart, Target, RefreshCw, Loader2 } from 'lucide-react';
 
 const metrics = [
   { key: 'overall_score', label: 'Overall Score', icon: Shield, desc: 'Your composite risk behavior score' },
@@ -14,17 +18,96 @@ const metrics = [
   { key: 'revenge_trading_score', label: 'Revenge Trading', icon: Brain, desc: 'Impulsive recovery attempts', inverted: true },
 ];
 
+function mapTradesForAnalysis(rows: any[]): Trade[] {
+  return rows.map((row) => ({
+    id: row.id,
+    timestamp: row.timestamp,
+    action: row.action === 'buy' ? 'buy' : 'sell',
+    asset: String(row.asset || ''),
+    quantity: Number(row.quantity) || 0,
+    entry_price: Number(row.entry_price) || 0,
+    exit_price: row.exit_price !== null && row.exit_price !== undefined ? Number(row.exit_price) : undefined,
+    pnl: row.pnl !== null && row.pnl !== undefined ? Number(row.pnl) : undefined,
+    account_balance: row.account_balance !== null && row.account_balance !== undefined ? Number(row.account_balance) : undefined,
+    notes: row.notes || undefined,
+  }));
+}
+
 export default function RiskProfile() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [profiles, setProfiles] = useState<any[]>([]);
+  const [tradeCount, setTradeCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     if (user) {
-      supabase.from('risk_profiles').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(10)
-        .then(({ data }) => { setProfiles(data || []); setLoading(false); });
+      fetchData();
     }
   }, [user]);
+
+  const fetchData = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const [profileRes, allTrades] = await Promise.all([
+        supabase.from('risk_profiles').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(10),
+        fetchAllTradesForUser(user.id),
+      ]);
+
+      if (profileRes.error) throw profileRes.error;
+
+      setProfiles(profileRes.data || []);
+      setTradeCount(allTrades.length);
+    } catch (error: any) {
+      toast({ title: 'Failed to load risk profile', description: error?.message || 'Unknown error', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateRiskProfile = async () => {
+    if (!user) return;
+    setGenerating(true);
+    try {
+      const allTrades = await fetchAllTradesForUser(user.id);
+      if (allTrades.length < 5) {
+        toast({ title: 'Not enough data', description: 'Add at least 5 trades to generate a risk profile.', variant: 'destructive' });
+        setGenerating(false);
+        return;
+      }
+
+      const analysisTrades = mapTradesForAnalysis(allTrades);
+      const biases = runFullAnalysis(analysisTrades);
+      const profile = calculateRiskProfile(analysisTrades, biases);
+
+      const { data, error } = await supabase
+        .from('risk_profiles')
+        .insert({
+          user_id: user.id,
+          overall_score: profile.overallScore,
+          overtrading_score: profile.overtradingScore,
+          loss_aversion_score: profile.lossAversionScore,
+          revenge_trading_score: profile.revengeTradingScore,
+          discipline_score: profile.disciplineScore,
+          emotional_control_score: profile.emotionalControlScore,
+          details: profile,
+        })
+        .select('*')
+        .single();
+
+      if (error) throw error;
+
+      setProfiles((prev) => [data, ...prev].slice(0, 10));
+      setTradeCount(allTrades.length);
+      toast({ title: 'Risk profile updated', description: 'Latest behavioral profile generated from your full trade history.' });
+    } catch (error: any) {
+      toast({ title: 'Risk profile generation failed', description: error?.message || 'Unknown error', variant: 'destructive' });
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const latest = profiles[0];
 
@@ -47,56 +130,70 @@ export default function RiskProfile() {
   return (
     <AppLayout>
       <div className="space-y-8 animate-fade-in">
-        <div>
-          <h1 className="text-3xl font-display font-bold">Risk Profile</h1>
-          <p className="text-muted-foreground mt-1">Your personalized behavioral risk assessment</p>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-3xl font-display font-bold">Risk Profile</h1>
+            <p className="text-muted-foreground mt-1">
+              Your personalized behavioral risk assessment ({tradeCount} trades available)
+            </p>
+          </div>
+          <Button onClick={generateRiskProfile} disabled={generating || loading || tradeCount < 5} className="gradient-primary text-primary-foreground">
+            {generating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+            {latest ? 'Refresh Profile' : 'Generate Profile'}
+          </Button>
         </div>
 
         {!latest ? (
           <Card className="glass-card">
             <CardContent className="py-16 text-center">
-              <Shield className="w-16 h-16 text-muted-foreground/30 mx-auto mb-4" />
-              <h3 className="text-xl font-display font-semibold mb-2">No risk profile yet</h3>
-              <p className="text-muted-foreground">Run a bias analysis first to generate your risk profile.</p>
+              {loading ? (
+                <Loader2 className="w-10 h-10 animate-spin text-primary mx-auto" />
+              ) : (
+                <>
+                  <Shield className="w-16 h-16 text-muted-foreground/30 mx-auto mb-4" />
+                  <h3 className="text-xl font-display font-semibold mb-2">No risk profile yet</h3>
+                  <p className="text-muted-foreground">
+                    {tradeCount < 5 ? 'Add at least 5 trades to generate your first risk profile.' : 'Click Generate Profile to create your risk profile.'}
+                  </p>
+                </>
+              )}
             </CardContent>
           </Card>
         ) : (
           <>
-            {/* Score cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {metrics.map(m => {
-                const score = Number(latest[m.key]) || 0;
+              {metrics.map((metric) => {
+                const score = Number(latest[metric.key]) || 0;
                 return (
-                  <Card key={m.key} className="glass-card">
+                  <Card key={metric.key} className="glass-card">
                     <CardContent className="pt-6">
                       <div className="flex items-start justify-between mb-4">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
-                            <m.icon className="w-5 h-5 text-primary" />
+                            <metric.icon className="w-5 h-5 text-primary" />
                           </div>
                           <div>
-                            <p className="font-medium">{m.label}</p>
-                            <p className="text-xs text-muted-foreground">{m.desc}</p>
+                            <p className="font-medium">{metric.label}</p>
+                            <p className="text-xs text-muted-foreground">{metric.desc}</p>
                           </div>
                         </div>
-                        <span className={`text-2xl font-display font-bold ${getScoreColor(score, m.inverted)}`}>
-                          {getScoreGrade(score, m.inverted)}
+                        <span className={`text-2xl font-display font-bold ${getScoreColor(score, metric.inverted)}`}>
+                          {getScoreGrade(score, metric.inverted)}
                         </span>
                       </div>
                       <div className="h-3 rounded-full bg-muted overflow-hidden">
                         <div
                           className="h-full rounded-full gradient-primary transition-all duration-700"
-                          style={{ width: `${m.inverted ? 100 - score : score}%` }}
+                          style={{ width: `${metric.inverted ? 100 - score : score}%` }}
                         />
                       </div>
-                      <p className="text-right text-sm text-muted-foreground mt-1">{m.inverted ? 100 - score : score}/100</p>
+                      <p className="text-right text-sm text-muted-foreground mt-1">{metric.inverted ? 100 - score : score}/100</p>
                     </CardContent>
                   </Card>
                 );
               })}
             </div>
 
-            {/* Portfolio optimization suggestions */}
             <Card className="glass-card">
               <CardHeader>
                 <CardTitle className="font-display">Portfolio Optimization Suggestions</CardTitle>

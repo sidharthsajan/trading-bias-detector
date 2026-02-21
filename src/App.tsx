@@ -13,6 +13,7 @@ import AICoach from "./pages/AICoach";
 import EmotionalTracker from "./pages/EmotionalTracker";
 import Portfolio from "./pages/Portfolio";
 import Settings from "./pages/Settings";
+import Trades from "./pages/Trades";
 import NotFound from "./pages/NotFound";
 import { Loader2 } from "lucide-react";
 
@@ -46,6 +47,7 @@ const App = () => (
             <Route path="/ai-coach" element={<ProtectedRoute><AICoach /></ProtectedRoute>} />
             <Route path="/emotions" element={<ProtectedRoute><EmotionalTracker /></ProtectedRoute>} />
             <Route path="/portfolio" element={<ProtectedRoute><Portfolio /></ProtectedRoute>} />
+            <Route path="/trades" element={<ProtectedRoute><Trades /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -1,49 +1,102 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
+import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { formatMoney } from '@/lib/format';
+import { fetchAllTradesForUser, invalidateTradeCache } from '@/lib/trades';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { BarChart3, Upload, Brain, TrendingUp, TrendingDown, Activity, AlertTriangle } from 'lucide-react';
+import { BarChart3, Upload, Brain, TrendingUp, TrendingDown, Activity, AlertTriangle, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, ReferenceLine } from 'recharts';
 
-const COLORS = ['hsl(350, 84%, 46%)', 'hsl(220, 25%, 14%)', 'hsl(160, 60%, 45%)', 'hsl(40, 90%, 55%)', 'hsl(270, 60%, 55%)'];
+const COLORS = ['hsl(350, 84%, 46%)', 'hsl(196, 67%, 45%)', 'hsl(160, 60%, 45%)', 'hsl(40, 90%, 55%)', 'hsl(270, 60%, 55%)'];
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const navigate = useNavigate();
   const [trades, setTrades] = useState<any[]>([]);
   const [biases, setBiases] = useState<any[]>([]);
   const [riskProfile, setRiskProfile] = useState<any>(null);
   const [selectedAsset, setSelectedAsset] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [clearing, setClearing] = useState(false);
+
+  const fetchData = useCallback(async (isRefresh = false) => {
+    if (!user) return;
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+
+    try {
+      const [tradesRes, biasesRes, riskRes] = await Promise.allSettled([
+        fetchAllTradesForUser(user.id),
+        supabase.from('bias_analyses').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('risk_profiles').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(1),
+      ]);
+
+      if (tradesRes.status === 'fulfilled') {
+        setTrades(tradesRes.value || []);
+      } else {
+        toast({
+          title: 'Failed to load trades',
+          description: 'Your latest trade data could not be loaded. Try refreshing.',
+          variant: 'destructive',
+        });
+      }
+
+      if (biasesRes.status === 'fulfilled' && !biasesRes.value.error) {
+        setBiases(biasesRes.value.data || []);
+      }
+
+      if (riskRes.status === 'fulfilled' && !riskRes.value.error) {
+        setRiskProfile(riskRes.value.data?.[0] || null);
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [user, toast]);
 
   useEffect(() => {
-    fetchData();
-  }, [user]);
-
-  const fetchData = async () => {
     if (!user) return;
-    const [tradesRes, biasesRes, riskRes] = await Promise.all([
-      supabase.from('trades').select('*').eq('user_id', user.id).order('timestamp', { ascending: false }).limit(100),
-      supabase.from('bias_analyses').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
-      supabase.from('risk_profiles').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(1),
-    ]);
-    setTrades(tradesRes.data || []);
-    setBiases(biasesRes.data || []);
-    setRiskProfile(riskRes.data?.[0] || null);
-    setLoading(false);
-  };
+    void fetchData();
+  }, [user, fetchData]);
 
-  const totalPnl = trades.reduce((s, t) => s + (t.pnl || 0), 0);
-  const winningTrades = trades.filter(t => (t.pnl || 0) > 0).length;
-  const losingTrades = trades.filter(t => (t.pnl || 0) < 0).length;
+  const clearAllTrades = useCallback(async () => {
+    if (!user || trades.length === 0) return;
+
+    const confirmed = window.confirm('Clear all saved trades? This action cannot be undone.');
+    if (!confirmed) return;
+
+    setClearing(true);
+
+    try {
+      const { error } = await supabase.from('trades').delete().eq('user_id', user.id);
+      if (error) throw error;
+
+      invalidateTradeCache(user.id);
+      setTrades([]);
+      setBiases([]);
+      setRiskProfile(null);
+      toast({ title: 'All trades cleared' });
+    } catch (error: any) {
+      toast({ title: 'Clear failed', description: error?.message || 'Unknown error', variant: 'destructive' });
+    } finally {
+      setClearing(false);
+    }
+  }, [user, trades.length, toast]);
+
+  const totalPnl = trades.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
+  const winningTrades = trades.filter((t) => (Number(t.pnl) || 0) > 0).length;
   const winRate = trades.length > 0 ? Math.round((winningTrades / trades.length) * 100) : 0;
 
-  const criticalBiases = biases.filter(b => b.severity === 'critical' || b.severity === 'high');
+  const criticalBiases = biases.filter((b) => b.severity === 'critical' || b.severity === 'high');
+
+  const recentTrades = useMemo(() => trades.slice(0, 10), [trades]);
 
   const assetSymbols = useMemo(
     () =>
@@ -90,20 +143,37 @@ export default function Dashboard() {
   }, [trades, selectedAsset]);
 
   const biasDistribution = biases.reduce((acc: Record<string, number>, b) => {
-    acc[b.analysis_type] = (acc[b.analysis_type] || 0) + 1;
+    const rawType = String(b.analysis_type || '').trim().toLowerCase();
+    if (!rawType || rawType === 'unknown' || rawType === 'uncategorized') return acc;
+    acc[rawType] = (acc[rawType] || 0) + 1;
     return acc;
   }, {});
   const pieData = Object.entries(biasDistribution).map(([name, value]) => ({ name: name.replace('_', ' '), value }));
 
+  if (loading) {
+    return (
+      <AppLayout>
+        <div className="min-h-[40vh] flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </AppLayout>
+    );
+  }
+
   return (
     <AppLayout>
       <div className="space-y-8 animate-fade-in">
-        <div>
-          <h1 className="text-3xl font-display font-bold">Dashboard</h1>
-          <p className="text-muted-foreground mt-1">Your trading behavior at a glance</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-display font-bold">Dashboard</h1>
+            <p className="text-muted-foreground mt-1">Your trading behavior at a glance</p>
+          </div>
+          <Button variant="outline" onClick={() => fetchData(true)} disabled={refreshing || clearing}>
+            {refreshing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+            Refresh
+          </Button>
         </div>
 
-        {/* Stats row */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card className="glass-card">
             <CardContent className="pt-6">
@@ -166,7 +236,6 @@ export default function Dashboard() {
           </Card>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* P/L Index by Stock */}
             <Card className="glass-card">
               <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="font-display">P/L Index by Stock</CardTitle>
@@ -211,7 +280,7 @@ export default function Dashboard() {
                         />
                         <Tooltip
                           labelFormatter={(value) => new Date(Number(value)).toLocaleString()}
-                          formatter={(value: number, name: string, payload: any) => {
+                          formatter={(value: number, name: string) => {
                             if (name === 'index') return [`${Number(value).toFixed(2)}`, 'Index'];
                             if (name === 'cumulativePnl') return [formatMoney(value), 'Cumulative P/L'];
                             if (name === 'pnl') return [formatMoney(value), 'Trade P/L'];
@@ -235,7 +304,6 @@ export default function Dashboard() {
               </CardContent>
             </Card>
 
-            {/* Bias Distribution */}
             <Card className="glass-card">
               <CardHeader>
                 <CardTitle className="font-display">Bias Distribution</CardTitle>
@@ -262,11 +330,16 @@ export default function Dashboard() {
               </CardContent>
             </Card>
 
-            {/* Recent Trades */}
             <Card className="glass-card lg:col-span-2">
-              <CardHeader className="flex flex-row items-center justify-between">
+              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="font-display">Recent Trades</CardTitle>
-                <Button variant="outline" size="sm" onClick={() => navigate('/upload')}>View All</Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => navigate('/trades')}>View All</Button>
+                  <Button variant="destructive" size="sm" onClick={clearAllTrades} disabled={clearing || trades.length === 0}>
+                    {clearing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Trash2 className="w-4 h-4 mr-1" />}
+                    Clear Trades
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
@@ -282,19 +355,19 @@ export default function Dashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {trades.slice(0, 10).map(t => (
-                        <tr key={t.id} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
-                          <td className="py-2">{new Date(t.timestamp).toLocaleDateString()}</td>
-                          <td className="py-2 font-medium">{t.asset}</td>
+                      {recentTrades.map((trade) => (
+                        <tr key={trade.id} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
+                          <td className="py-2">{new Date(trade.timestamp).toLocaleDateString()}</td>
+                          <td className="py-2 font-medium">{trade.asset}</td>
                           <td className="py-2">
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${t.action === 'buy' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'}`}>
-                              {t.action.toUpperCase()}
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${trade.action === 'buy' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'}`}>
+                              {String(trade.action).toUpperCase()}
                             </span>
                           </td>
-                          <td className="py-2 text-right">{t.quantity}</td>
-                          <td className="py-2 text-right">{formatMoney(t.entry_price)}</td>
-                          <td className={`py-2 text-right font-medium ${(t.pnl || 0) >= 0 ? 'text-success' : 'text-destructive'}`}>
-                            {t.pnl !== null ? formatMoney(t.pnl) : '—'}
+                          <td className="py-2 text-right">{trade.quantity}</td>
+                          <td className="py-2 text-right">{formatMoney(trade.entry_price)}</td>
+                          <td className={`py-2 text-right font-medium ${(trade.pnl || 0) >= 0 ? 'text-success' : 'text-destructive'}`}>
+                            {trade.pnl !== null ? formatMoney(trade.pnl) : '-'}
                           </td>
                         </tr>
                       ))}
@@ -306,7 +379,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Risk Score */}
         {riskProfile && (
           <Card className="glass-card">
             <CardHeader>
@@ -317,8 +389,16 @@ export default function Dashboard() {
                 <div className="relative w-32 h-32">
                   <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
                     <circle cx="50" cy="50" r="40" fill="none" stroke="hsl(var(--muted))" strokeWidth="8" />
-                    <circle cx="50" cy="50" r="40" fill="none" stroke="hsl(var(--primary))" strokeWidth="8"
-                      strokeDasharray={`${riskProfile.overall_score * 2.51} 251`} strokeLinecap="round" />
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="40"
+                      fill="none"
+                      stroke="hsl(var(--primary))"
+                      strokeWidth="8"
+                      strokeDasharray={`${riskProfile.overall_score * 2.51} 251`}
+                      strokeLinecap="round"
+                    />
                   </svg>
                   <div className="absolute inset-0 flex items-center justify-center">
                     <span className="text-2xl font-display font-bold">{riskProfile.overall_score}</span>
@@ -328,9 +408,9 @@ export default function Dashboard() {
                   {[
                     { label: 'Discipline', score: riskProfile.discipline_score },
                     { label: 'Emotional Control', score: riskProfile.emotional_control_score },
-                    { label: 'Overtrading Risk', score: riskProfile.overtrading_score, inverted: true },
-                    { label: 'Loss Aversion', score: riskProfile.loss_aversion_score, inverted: true },
-                  ].map(item => (
+                    { label: 'Overtrading Risk', score: riskProfile.overtrading_score },
+                    { label: 'Loss Aversion', score: riskProfile.loss_aversion_score },
+                  ].map((item) => (
                     <div key={item.label}>
                       <p className="text-sm text-muted-foreground">{item.label}</p>
                       <div className="flex items-center gap-2 mt-1">
