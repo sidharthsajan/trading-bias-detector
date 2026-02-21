@@ -4,7 +4,7 @@ Built for the **SESA x National Bank Hackathon** by:
 - Jordan Yang
 - Larry Wang
 - Emily Hyuhn
-- Sid the Jit
+- Sidharth Sajan
 
 ## Overview
 
