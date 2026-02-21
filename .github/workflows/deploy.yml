@@ -1,0 +1,75 @@
+# CI/CD: build and push to ECR, update ECS Fargate service.
+# Uses OIDC for AWS auth (no long-lived keys). Configure IdP in IAM.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_FRONTEND: trading-bias-frontend
+  ECR_BACKEND: trading-bias-backend
+  ECS_CLUSTER: trading-bias-cluster
+  ECS_FRONTEND_SERVICE: trading-bias-frontend
+  ECS_BACKEND_SERVICE: trading-bias-backend
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push backend
+        env:
+          ECR_URI: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_BACKEND }}:latest
+        run: |
+          docker build -t $ECR_URI -f backend/Dockerfile backend
+          docker push $ECR_URI
+
+      - name: Build and push frontend
+        env:
+          ECR_URI: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_FRONTEND }}:latest
+        run: |
+          docker build -t $ECR_URI -f frontend/Dockerfile frontend
+          docker push $ECR_URI
+
+  deploy-ecs:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update ECS backend service
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_BACKEND_SERVICE }} \
+            --force-new-deployment
+
+      - name: Update ECS frontend service
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_FRONTEND_SERVICE }} \
+            --force-new-deployment
