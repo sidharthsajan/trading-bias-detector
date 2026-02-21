@@ -19,6 +19,7 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  Table2,
   Shield,
   Upload,
   User,
@@ -33,6 +34,7 @@ type NavItem = {
 
 const tradingItems: NavItem[] = [
   { icon: Upload, label: 'Upload Trades', path: '/upload' },
+  { icon: Table2, label: 'All Trades', path: '/trades' },
   { icon: Shield, label: 'Portfolio', path: '/portfolio' },
 ];
 

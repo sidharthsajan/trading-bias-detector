@@ -341,22 +341,40 @@ export function parseCSV(csvText: string): Trade[] {
 
   const trades: Trade[] = [];
 
+  const parseOptionalNumber = (raw: string | undefined): number | undefined => {
+    if (raw === undefined) return undefined;
+    const cleaned = raw.trim();
+    if (cleaned === '') return undefined;
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(',').map(c => c.trim());
     if (cols.length < 3) continue;
 
     const actionRaw = cols[actionIdx]?.toLowerCase();
-    const action = actionRaw === 'buy' || actionRaw === 'b' ? 'buy' : 'sell';
+    let action: 'buy' | 'sell' | null = null;
+    if (actionRaw === 'buy' || actionRaw === 'b') action = 'buy';
+    if (actionRaw === 'sell' || actionRaw === 's') action = 'sell';
+    if (!action) continue;
+
+    const asset = cols[assetIdx]?.trim();
+    if (!asset) continue;
+
+    const quantity = quantityIdx !== -1 ? Number(cols[quantityIdx]) : 0;
+    const entryPrice = entryPriceIdx !== -1 ? Number(cols[entryPriceIdx]) : 0;
+    if (!Number.isFinite(quantity) || !Number.isFinite(entryPrice) || quantity <= 0 || entryPrice <= 0) continue;
 
     trades.push({
       timestamp: cols[timestampIdx] || new Date().toISOString(),
       action,
-      asset: cols[assetIdx] || 'UNKNOWN',
-      quantity: parseFloat(cols[quantityIdx]) || 0,
-      entry_price: parseFloat(cols[entryPriceIdx]) || 0,
-      exit_price: exitPriceIdx !== -1 ? parseFloat(cols[exitPriceIdx]) || undefined : undefined,
-      pnl: pnlIdx !== -1 ? parseFloat(cols[pnlIdx]) || undefined : undefined,
-      account_balance: balanceIdx !== -1 ? parseFloat(cols[balanceIdx]) || undefined : undefined,
+      asset,
+      quantity,
+      entry_price: entryPrice,
+      exit_price: exitPriceIdx !== -1 ? parseOptionalNumber(cols[exitPriceIdx]) : undefined,
+      pnl: pnlIdx !== -1 ? parseOptionalNumber(cols[pnlIdx]) : undefined,
+      account_balance: balanceIdx !== -1 ? parseOptionalNumber(cols[balanceIdx]) : undefined,
       notes: notesIdx !== -1 ? cols[notesIdx] : undefined,
     });
   }

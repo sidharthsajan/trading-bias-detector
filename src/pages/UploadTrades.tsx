@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { parseCSV, Trade } from '@/lib/biasDetection';
 import { formatMoney } from '@/lib/format';
+import { invalidateTradeCache } from '@/lib/trades';
 import { Upload, Plus, FileSpreadsheet, Trash2, Loader2 } from 'lucide-react';
 
 export default function UploadTrades() {
@@ -83,6 +84,7 @@ export default function UploadTrades() {
     if (error) {
       toast({ title: 'Save failed', description: error.message, variant: 'destructive' });
     } else {
+      invalidateTradeCache(user.id);
       toast({ title: 'Saved!', description: `${rows.length} trades saved successfully.` });
       setParsedTrades([]);
     }
