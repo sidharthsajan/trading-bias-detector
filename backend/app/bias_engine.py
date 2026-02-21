@@ -192,11 +192,18 @@ def detect_overtrading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[in
         )
         biased_indices = list(set(biased_indices) | set(freq_indices))
 
+    # Score relative to dataset: compare max_per_hour to mean trades per hour in this dataset
+    mean_per_hour = hourly["len"].mean()
+    if mean_per_hour is None or mean_per_hour <= 0:
+        mean_per_hour = 1.0
+    # How extreme is max vs typical? ratio > 1 means clustering; score scales with ratio
+    freq_ratio = max_per_hour / max(mean_per_hour, 0.5)
     score = 0.0
-    if max_per_hour > 5:
-        score += min(50, (max_per_hour - 5) * 8)
-    if biased_indices:
-        score += min(50, len(biased_indices) * 5)
+    if freq_ratio > 1.0:
+        score += min(50, (freq_ratio - 1.0) * 25)  # ratio 3 -> 50, ratio 5 -> 100
+    # Balance component: what share of trades exceeded 10% of balance?
+    pct_over_balance = len(biased_indices) / max(n, 1)
+    score += min(50, pct_over_balance * 250)  # 20% of trades -> 50
     score = min(100, score)
     if score < 15:
         return None, []
@@ -210,6 +217,7 @@ def detect_overtrading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[in
         + (f"{len(biased_indices)} trade(s) exceeded 10% of balance per ticket." if biased_indices else ""),
         "details": {
             "max_trades_per_hour": int(max_per_hour),
+            "mean_trades_per_hour": round(float(mean_per_hour), 2),
             "biased_trade_count": len(biased_indices),
         },
         "score": round(score),
@@ -247,11 +255,12 @@ def detect_loss_aversion(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[
     # Loss aversion: hold losers longer (higher avg duration for losses) and/or larger avg loss
     duration_ratio = avg_duration_loss / avg_duration_win if avg_duration_win and avg_duration_win > 0 else 0
 
+    # Score relative to severity: need substantial deviation from 1.0 to approach 100
     score = 0.0
-    if duration_ratio > 1.2:
-        score += min(40, (duration_ratio - 1) * 50)
-    if loss_win_ratio > 1.2:
-        score += min(40, (loss_win_ratio - 1) * 30)
+    if duration_ratio > 1.1:
+        score += min(50, (duration_ratio - 1) * 40)  # ratio 2.25 -> 50
+    if loss_win_ratio > 1.1:
+        score += min(50, (loss_win_ratio - 1) * 25)  # ratio 3 -> 50
     score = min(100, score)
     if score < 15:
         return None, []
@@ -315,7 +324,9 @@ def detect_revenge_trading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, lis
     biased_indices = df_idx.filter(revenge_mask).select("_row_idx").to_series().to_list()
 
     count = len(biased_indices)
-    score = min(100, count * 25) if count else 0
+    # Score from entire dataset: revenge as a share of total trades (not raw count)
+    revenge_rate = count / max(n, 1)
+    score = min(100, revenge_rate * 400) if count else 0  # 25% of trades revenge -> 100; 5% -> 20
     if score < 15:
         return None, []
 
@@ -325,7 +336,11 @@ def detect_revenge_trading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, lis
         "severity": severity,
         "title": "Revenge Trading Pattern",
         "description": f"{count} trade(s) opened within 30 minutes of a loss with quantity >1.5× the previous trade.",
-        "details": {"revenge_trade_count": count},
+        "details": {
+            "revenge_trade_count": count,
+            "revenge_rate_pct": round(revenge_rate * 100, 2),
+            "total_trades": n,
+        },
         "score": round(score),
     }
     return result, biased_indices
@@ -384,9 +399,15 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
         biases.append(rv_result)
     biases.sort(key=lambda b: b["score"], reverse=True)
 
-    # Aggregate bias score 0-100 (higher = more biased)
-    bias_score = min(100, sum(b["score"] for b in biases) / max(len(biases), 1)) if biases else 0
-    bias_score = round(bias_score)
+    # Aggregate bias score 0-100 (median so one severe bias doesn't force overall to 100)
+    scores = [b["score"] for b in biases]
+    if not scores:
+        bias_score = 0
+    else:
+        sorted_scores = sorted(scores)
+        n = len(sorted_scores)
+        bias_score = sorted_scores[n // 2] if n % 2 else (sorted_scores[n // 2 - 1] + sorted_scores[n // 2]) / 2
+    bias_score = round(min(100, max(0, bias_score)))
 
     trade_flags = {
         "overtrading": ot_indices,
