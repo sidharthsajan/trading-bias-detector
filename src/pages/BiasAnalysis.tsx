@@ -79,14 +79,11 @@ export default function BiasAnalysis() {
   const [uploading, setUploading] = useState(false);
   const [isJournalOpen, setIsJournalOpen] = useState(true);
 
-  useEffect(() => {
-    if (user) fetchData();
-  }, [user]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    if (!user) return;
     const [tradesRes, biasRes] = await Promise.all([
-      supabase.from('trades').select('*').eq('user_id', user!.id).order('timestamp', { ascending: true }),
-      supabase.from('bias_analyses').select('*').eq('user_id', user!.id).order('created_at', { ascending: false }),
+      supabase.from('trades').select('*').eq('user_id', user.id).order('timestamp', { ascending: true }),
+      supabase.from('bias_analyses').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
     ]);
     setTrades((tradesRes.data || []).map((t: Record<string, unknown>) => ({
       timestamp: t.timestamp as string,
@@ -107,7 +104,12 @@ export default function BiasAnalysis() {
       details: (s.details as Record<string, unknown>) || {},
     })));
     setLoading(false);
-  };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    void fetchData();
+  }, [user, fetchData]);
 
   const analyzeFile = useCallback(async (file: File) => {
     if (!file.name.toLowerCase().endsWith('.csv')) {

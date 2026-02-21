@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -31,19 +31,21 @@ export default function EmotionalTracker() {
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
 
-  useEffect(() => {
-    if (user) fetchTags();
-  }, [user]);
-
-  const fetchTags = async () => {
+  const fetchTags = useCallback(async () => {
+    if (!user) return;
     const { data } = await supabase
       .from('emotional_tags')
       .select('*')
-      .eq('user_id', user!.id)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(100);
     setTags(data || []);
-  };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    void fetchTags();
+  }, [user, fetchTags]);
 
   const saveTag = async () => {
     setSaving(true);
@@ -59,7 +61,7 @@ export default function EmotionalTracker() {
       toast({ title: 'Logged!', description: 'Your emotional state has been recorded.' });
       setNotes('');
       setIntensity([5]);
-      fetchTags();
+      void fetchTags();
     }
     setSaving(false);
   };
