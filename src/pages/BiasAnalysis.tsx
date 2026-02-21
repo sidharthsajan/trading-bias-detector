@@ -12,6 +12,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const FALLBACK_BIAS_SCORE = 50;
+const BIAS_AXES = [
+  { key: 'overtrading', label: 'Overtrading' },
+  { key: 'loss_aversion', label: 'Loss Aversion' },
+  { key: 'revenge_trading', label: 'Revenge Trading' },
+  { key: 'disposition_effect', label: 'Disposition Effect' },
+  { key: 'anchoring', label: 'Anchoring' },
+  { key: 'confirmation_bias', label: 'Confirmation Bias' },
+] as const;
 
 export interface AnalyzeResponse {
   biases: Array<{
@@ -184,11 +192,22 @@ export default function BiasAnalysis() {
           };
         });
 
-  const radarData = [
-    { bias: 'Overtrading', score: displayResults.find(r => r.type === 'overtrading')?.score ?? 0 },
-    { bias: 'Loss Aversion', score: displayResults.find(r => r.type === 'loss_aversion')?.score ?? 0 },
-    { bias: 'Revenge', score: displayResults.find(r => r.type === 'revenge_trading')?.score ?? 0 },
-  ];
+  const radarScoreByType = displayResults.reduce((acc, result) => {
+    const rawScore = typeof result.score === 'number' ? result.score : Number(result.score);
+    if (!Number.isFinite(rawScore)) return acc;
+
+    const clampedScore = Math.max(0, Math.min(100, rawScore));
+    const key = String(result.type || '').trim().toLowerCase();
+    if (!key) return acc;
+
+    acc[key] = Math.max(acc[key] ?? 0, clampedScore);
+    return acc;
+  }, {} as Record<string, number>);
+
+  const radarData = BIAS_AXES.map((axis) => ({
+    bias: axis.label,
+    score: radarScoreByType[axis.key] ?? 0,
+  }));
 
   // Aggregate bias score 0–100 (median of bias scores so one severe bias doesn't force overall to 100)
   const biasScore = (() => {
@@ -321,12 +340,12 @@ export default function BiasAnalysis() {
             <Card className="glass-card">
               <CardHeader>
                 <CardTitle className="font-display">Bias Radar</CardTitle>
-                <CardDescription>Overtrading, loss aversion, revenge (0–100)</CardDescription>
+                <CardDescription>6-factor bias radar (0-100)</CardDescription>
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={280}>
                   <RadarChart data={radarData}>
-                    <PolarGrid stroke="hsl(var(--border))" />
+                    <PolarGrid gridType="polygon" stroke="hsl(var(--border))" />
                     <PolarAngleAxis dataKey="bias" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }} />
                     <PolarRadiusAxis domain={[0, 100]} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} />
                     <Radar name="Score" dataKey="score" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={2} />
