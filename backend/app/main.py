@@ -32,13 +32,25 @@ def root():
     return {"service": "National Bank Bias Detector API", "docs": "/docs"}
 
 
+MAX_UPLOAD_BYTES = 150 * 1024 * 1024  # 150 MB for large CSVs (e.g. 200k+ rows)
+
+
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
     """Accept a CSV file (Timestamp, Buy/Sell, Asset, Quantity, Price, P/L, Balance), run bias detection, return biases, trade_flags, bias_score, and trades."""
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Upload a CSV file.")
     try:
-        contents = await file.read()
+        chunks = []
+        total = 0
+        while chunk := await file.read(1024 * 1024):  # 1 MB chunks
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail=f"File too large. Max {MAX_UPLOAD_BYTES // (1024*1024)} MB.")
+            chunks.append(chunk)
+        contents = b"".join(chunks)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read file: {e}") from e
     try:

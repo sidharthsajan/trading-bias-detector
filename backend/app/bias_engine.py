@@ -340,8 +340,14 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
             "trade_flags": {"overtrading": [], "loss_aversion": [], "revenge_trading": []},
             "bias_score": 0,
             "trades": [],
+            "total_trades": 0,
+            "hour_counts": [0] * 24,
             "preprocess": preprocess_stats,
         }
+
+    # Cap rows returned to avoid huge JSON and frontend DOM crash (e.g. 200k rows)
+    TRADES_RESPONSE_CAP = 10_000
+    total_trades = df.height
 
     select_exprs = [
         pl.col(COL_TIMESTAMP).dt.strftime("%Y-%m-%dT%H:%M:%S").alias("timestamp"),
@@ -358,7 +364,11 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
         select_exprs.append(pl.col(COL_BALANCE).alias("balance"))
     else:
         select_exprs.append(pl.lit(None).cast(pl.Float64).alias("balance"))
-    trades_out = df.select(select_exprs).to_dicts()
+    # Hour counts for heatmap (from full dataset, before capping)
+    hour_counts = [0] * 24
+    for row in df.with_columns(pl.col(COL_TIMESTAMP).dt.hour().alias("h")).group_by("h").agg(pl.len().alias("c")).iter_rows():
+        hour_counts[row[0]] = row[1]
+    trades_out = df.select(select_exprs).head(TRADES_RESPONSE_CAP).to_dicts()
 
     ot_result, ot_indices = detect_overtrading(df)
     la_result, la_indices = detect_loss_aversion(df)
@@ -388,5 +398,7 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
         "trade_flags": trade_flags,
         "bias_score": bias_score,
         "trades": trades_out,
+        "total_trades": total_trades,
+        "hour_counts": hour_counts,
         "preprocess": preprocess_stats,
     }

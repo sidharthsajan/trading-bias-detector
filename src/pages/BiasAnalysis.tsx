@@ -11,6 +11,8 @@ import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Responsi
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const ANALYZE_TIMEOUT_MS = 5 * 60 * 1000; // 5 min for large CSVs
+const JOURNAL_PAGE_SIZE = 100;
 
 export interface AnalyzeResponse {
   biases: Array<{
@@ -36,6 +38,8 @@ export interface AnalyzeResponse {
     p_l: number | null;
     balance: number | null;
   }>;
+  total_trades?: number;
+  hour_counts?: number[];
   preprocess?: {
     rows_before: number;
     rows_after: number;
@@ -69,6 +73,7 @@ export default function BiasAnalysis() {
   const [apiResult, setApiResult] = useState<AnalyzeResponse | null>(null);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [journalPage, setJournalPage] = useState(0);
 
   useEffect(() => {
     if (user) fetchData();
@@ -107,19 +112,26 @@ export default function BiasAnalysis() {
     }
     setUploading(true);
     setApiResult(null);
+    setJournalPage(0);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
     try {
       const form = new FormData();
       form.append('file', file);
-      const res = await fetch(`${API_BASE}/analyze`, { method: 'POST', body: form });
+      const res = await fetch(`${API_BASE}/analyze`, { method: 'POST', body: form, signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || res.statusText || 'Analysis failed');
       }
       const data: AnalyzeResponse = await res.json();
       setApiResult(data);
-      toast({ title: 'Analysis complete', description: `Bias score: ${data.bias_score}. ${data.biases.length} pattern(s) detected.` });
+      const total = data.total_trades ?? data.trades.length;
+      toast({ title: 'Analysis complete', description: `Bias score: ${data.bias_score}. ${data.biases.length} pattern(s) detected. ${total.toLocaleString()} trades.` });
     } catch (e) {
-      toast({ title: 'Analysis failed', description: e instanceof Error ? e.message : 'Could not reach analysis API.', variant: 'destructive' });
+      clearTimeout(timeoutId);
+      const msg = e instanceof Error ? (e.name === 'AbortError' ? 'Request timed out. Try a smaller file or try again.' : e.message) : 'Could not reach analysis API.';
+      toast({ title: 'Analysis failed', description: msg, variant: 'destructive' });
     } finally {
       setUploading(false);
     }
@@ -194,7 +206,15 @@ export default function BiasAnalysis() {
     balance: t.account_balance ?? null,
   }));
 
+  const totalTradesCount = apiResult?.total_trades ?? journalTrades.length;
+  const journalTotalPages = Math.max(1, Math.ceil(journalTrades.length / JOURNAL_PAGE_SIZE));
+  const journalStart = journalPage * JOURNAL_PAGE_SIZE;
+  const journalPageTrades = journalTrades.slice(journalStart, journalStart + JOURNAL_PAGE_SIZE);
+
   const heatmapData = (() => {
+    if (apiResult?.hour_counts && apiResult.hour_counts.length === 24) {
+      return apiResult.hour_counts.map((count, hour) => ({ hour, count }));
+    }
     const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
     journalTrades.forEach(t => {
       try {
@@ -289,13 +309,18 @@ export default function BiasAnalysis() {
           </div>
         )}
 
-        {/* Trade Journal table */}
+        {/* Trade Journal table (paginated for large datasets) */}
         {journalTrades.length > 0 && (
           <div>
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="font-display">Trade Journal</CardTitle>
-              <CardDescription>Biased trades are highlighted in red</CardDescription>
+              <CardDescription>
+                Biased trades are highlighted in red.
+                {totalTradesCount > JOURNAL_PAGE_SIZE && (
+                  <> Showing {journalStart + 1}–{Math.min(journalStart + JOURNAL_PAGE_SIZE, journalTrades.length)} of {totalTradesCount.toLocaleString()} trades.</>
+                )}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -311,22 +336,50 @@ export default function BiasAnalysis() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {journalTrades.map((row, idx) => (
-                    <TableRow
-                      key={idx}
-                      className={allBiasedIndices.has(idx) ? 'bg-destructive/10 border-l-4 border-l-destructive' : ''}
-                    >
-                      <TableCell>{row.timestamp}</TableCell>
-                      <TableCell>{row.buy_sell}</TableCell>
-                      <TableCell>{row.asset}</TableCell>
-                      <TableCell>{row.quantity}</TableCell>
-                      <TableCell>{row.price}</TableCell>
-                      <TableCell className={row.p_l != null && row.p_l < 0 ? 'text-destructive' : ''}>{row.p_l != null ? row.p_l : '—'}</TableCell>
-                      <TableCell>{row.balance != null ? row.balance : '—'}</TableCell>
-                    </TableRow>
-                  ))}
+                  {journalPageTrades.map((row, i) => {
+                    const globalIdx = journalStart + i;
+                    return (
+                      <TableRow
+                        key={globalIdx}
+                        className={allBiasedIndices.has(globalIdx) ? 'bg-destructive/10 border-l-4 border-l-destructive' : ''}
+                      >
+                        <TableCell>{row.timestamp}</TableCell>
+                        <TableCell>{row.buy_sell}</TableCell>
+                        <TableCell>{row.asset}</TableCell>
+                        <TableCell>{row.quantity}</TableCell>
+                        <TableCell>{row.price}</TableCell>
+                        <TableCell className={row.p_l != null && row.p_l < 0 ? 'text-destructive' : ''}>{row.p_l != null ? row.p_l : '—'}</TableCell>
+                        <TableCell>{row.balance != null ? row.balance : '—'}</TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
+              {journalTotalPages > 1 && (
+                <div className="flex items-center justify-between mt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Page {journalPage + 1} of {journalTotalPages}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setJournalPage((p) => Math.max(0, p - 1))}
+                      disabled={journalPage === 0}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setJournalPage((p) => Math.min(journalTotalPages - 1, p + 1))}
+                      disabled={journalPage >= journalTotalPages - 1}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
           </div>

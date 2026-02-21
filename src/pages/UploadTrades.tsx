@@ -17,6 +17,7 @@ export default function UploadTrades() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [uploading, setUploading] = useState(false);
+  const [saveProgress, setSaveProgress] = useState<{ done: number; total: number } | null>(null);
   const [parsedTrades, setParsedTrades] = useState<Trade[]>([]);
   const [showManual, setShowManual] = useState(false);
 
@@ -63,32 +64,47 @@ export default function UploadTrades() {
     toast({ title: `Parsed ${trades.length} trades` });
   }, [toast]);
 
+  const BATCH_SIZE = 1000; // Supabase-friendly chunk size; keeps UI responsive
+
   const saveTrades = async (tradesToSave: Trade[]) => {
     if (!user) return;
     setUploading(true);
+    const total = tradesToSave.length;
+    setSaveProgress(total > BATCH_SIZE ? { done: 0, total } : null);
 
-    const rows = tradesToSave.map(t => ({
-      user_id: user.id,
-      timestamp: new Date(t.timestamp).toISOString(),
-      action: t.action,
-      asset: t.asset,
-      quantity: t.quantity,
-      entry_price: t.entry_price,
-      exit_price: t.exit_price ?? null,
-      pnl: t.pnl ?? null,
-      account_balance: t.account_balance ?? null,
-      notes: t.notes || null,
-    }));
-
-    const { error } = await supabase.from('trades').insert(rows);
-    if (error) {
-      toast({ title: 'Save failed', description: error.message, variant: 'destructive' });
-    } else {
+    try {
+      for (let offset = 0; offset < total; offset += BATCH_SIZE) {
+        const batch = tradesToSave.slice(offset, offset + BATCH_SIZE);
+        const rows = batch.map(t => ({
+          user_id: user.id,
+          timestamp: new Date(t.timestamp).toISOString(),
+          action: t.action,
+          asset: t.asset,
+          quantity: t.quantity,
+          entry_price: t.entry_price,
+          exit_price: t.exit_price ?? null,
+          pnl: t.pnl ?? null,
+          account_balance: t.account_balance ?? null,
+          notes: t.notes || null,
+        }));
+        const { error } = await supabase.from('trades').insert(rows);
+        if (error) {
+          toast({ title: 'Save failed', description: error.message, variant: 'destructive' });
+          return;
+        }
+        setSaveProgress(p => (p ? { done: offset + batch.length, total: p.total } : null));
+        // Yield to UI so it can update progress
+        if (offset + BATCH_SIZE < total) {
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
       invalidateTradeCache(user.id);
-      toast({ title: 'Saved!', description: `${rows.length} trades saved successfully.` });
+      toast({ title: 'Saved!', description: `${total.toLocaleString()} trades saved successfully.` });
       setParsedTrades([]);
+    } finally {
+      setUploading(false);
+      setSaveProgress(null);
     }
-    setUploading(false);
   };
 
   const addManualTrade = async () => {
@@ -166,7 +182,7 @@ export default function UploadTrades() {
                 </Button>
                 <Button onClick={() => saveTrades(parsedTrades)} disabled={uploading} className="gradient-primary text-primary-foreground">
                   {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                  Save All
+                  {saveProgress ? `Saving ${saveProgress.done.toLocaleString()} / ${saveProgress.total.toLocaleString()}` : 'Save All'}
                 </Button>
               </div>
             </CardHeader>
