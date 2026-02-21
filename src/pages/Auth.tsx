@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Brain, ChevronRight, Eye, EyeOff, LineChart, Loader2, ShieldCheck } from 'lucide-react';
+import { ChevronRight, Eye, EyeOff, LineChart, Loader2, ShieldCheck } from 'lucide-react';
 
 const featurePoints = [
   {
@@ -68,8 +68,8 @@ export default function Auth() {
         <div className="h-1 bg-primary" />
         <div className="mx-auto max-w-6xl h-20 px-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-md gradient-primary flex items-center justify-center">
-              <Brain className="w-6 h-6 text-primary-foreground" />
+            <div className="w-11 h-11 rounded-md bg-white border border-border flex items-center justify-center overflow-hidden">
+              <img src="/national-bank-logo.png" alt="National Bank logo" className="w-8 h-8 object-contain" />
             </div>
             <div>
               <p className="font-semibold text-secondary leading-tight">Bias Detector</p>

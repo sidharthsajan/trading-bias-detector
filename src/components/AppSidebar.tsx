@@ -115,8 +115,8 @@ export default function AppSidebar() {
           onClick={() => navigate('/dashboard')}
           className="flex items-center gap-3 rounded-md px-2 py-1 hover:bg-sidebar-accent/60 transition-colors"
         >
-          <div className="w-9 h-9 rounded-md gradient-primary flex items-center justify-center">
-            <Brain className="w-5 h-5 text-primary-foreground" />
+          <div className="w-9 h-9 rounded-md bg-white/95 border border-sidebar-border/70 flex items-center justify-center overflow-hidden">
+            <img src="/national-bank-logo.png" alt="National Bank logo" className="w-7 h-7 object-contain" />
           </div>
           <div className="text-left">
             <p className="text-sm font-semibold leading-tight">Bias Detector</p>
