@@ -14,7 +14,7 @@ export const AI_COACH_DRAFT_KEY = 'ai_coach_prefill_draft';
 const configuredAvatarUrl = (import.meta.env.VITE_AI_COACH_AVATAR_URL || '').trim();
 export const AI_COACH_AVATAR_URL = configuredAvatarUrl || '/coach-avatar.png';
 const configuredMascotUrl = (import.meta.env.VITE_AI_COACH_MASCOT_URL || '').trim();
-export const AI_COACH_MASCOT_URL = configuredMascotUrl || '/national-bank-logo.png';
+export const AI_COACH_MASCOT_URL = configuredMascotUrl || '/mascot-walking.gif';
 
 export type CoachContext = {
   trades: InsightTrade[];

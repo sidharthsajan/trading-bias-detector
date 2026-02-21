@@ -10,9 +10,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BarChart3, Upload, Brain, TrendingUp, TrendingDown, Activity, AlertTriangle, Loader2, RefreshCw, Trash2 } from 'lucide-react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, ReferenceLine } from 'recharts';
+import { Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, ReferenceLine, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
 
-const COLORS = ['hsl(350, 84%, 46%)', 'hsl(196, 67%, 45%)', 'hsl(160, 60%, 45%)', 'hsl(40, 90%, 55%)', 'hsl(270, 60%, 55%)'];
+const BIAS_AXES = [
+  { key: 'overtrading', label: 'Overtrading' },
+  { key: 'loss_aversion', label: 'Loss Aversion' },
+  { key: 'revenge_trading', label: 'Revenge Trading' },
+  { key: 'disposition_effect', label: 'Disposition Effect' },
+  { key: 'anchoring', label: 'Anchoring' },
+  { key: 'confirmation_bias', label: 'Confirmation Bias' },
+] as const;
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -148,7 +155,17 @@ export default function Dashboard() {
     acc[rawType] = (acc[rawType] || 0) + 1;
     return acc;
   }, {});
-  const pieData = Object.entries(biasDistribution).map(([name, value]) => ({ name: name.replace('_', ' '), value }));
+
+  const radarData = useMemo(
+    () => BIAS_AXES.map((axis) => ({
+      bias: axis.label,
+      value: biasDistribution[axis.key] || 0,
+    })),
+    [biasDistribution],
+  );
+
+  const hasRadarData = radarData.some((row) => row.value > 0);
+  const radarMax = Math.max(3, ...radarData.map((row) => row.value));
 
   if (loading) {
     return (
@@ -306,17 +323,25 @@ export default function Dashboard() {
 
             <Card className="glass-card">
               <CardHeader>
-                <CardTitle className="font-display">Bias Distribution</CardTitle>
+                <CardTitle className="font-display">Bias Radar (6-Factor)</CardTitle>
               </CardHeader>
               <CardContent>
-                {pieData.length > 0 ? (
+                {hasRadarData ? (
                   <ResponsiveContainer width="100%" height={300}>
-                    <PieChart>
-                      <Pie data={pieData} cx="50%" cy="50%" outerRadius={100} dataKey="value" label={({ name, value }) => `${name} (${value})`}>
-                        {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                      </Pie>
-                      <Tooltip />
-                    </PieChart>
+                    <RadarChart data={radarData}>
+                      <PolarGrid gridType="polygon" stroke="hsl(var(--border))" />
+                      <PolarAngleAxis dataKey="bias" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                      <PolarRadiusAxis angle={90} domain={[0, radarMax]} tickCount={Math.min(5, radarMax + 1)} />
+                      <Radar
+                        name="Signals"
+                        dataKey="value"
+                        stroke="hsl(var(--primary))"
+                        fill="hsl(var(--primary))"
+                        fillOpacity={0.35}
+                        strokeWidth={2}
+                      />
+                      <Tooltip formatter={(value: number) => [`${value}`, 'Occurrences']} />
+                    </RadarChart>
                   </ResponsiveContainer>
                 ) : (
                   <div className="flex items-center justify-center h-[300px] text-muted-foreground">
