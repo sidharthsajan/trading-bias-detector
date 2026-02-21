@@ -24,6 +24,7 @@ const MASCOT_SIZE = 56;
 const MASCOT_MARGIN = 8;
 const MASCOT_TOP_OFFSET = 72;
 const MASCOT_SPEED_PX_PER_SEC = 28;
+const MASCOT_STATE_STORAGE_KEY = 'floating_coach_mascot_state_v1';
 
 type BorderEdge = 'top' | 'right' | 'bottom' | 'left';
 
@@ -32,6 +33,12 @@ type Bounds = {
   maxX: number;
   minY: number;
   maxY: number;
+};
+
+type MotionState = {
+  x: number;
+  y: number;
+  edge: BorderEdge;
 };
 
 export default function FloatingCoach() {
@@ -52,7 +59,7 @@ export default function FloatingCoach() {
   const mascotRef = useRef<HTMLButtonElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const lastFrameTimeRef = useRef<number | null>(null);
-  const motionRef = useRef<{ x: number; y: number; edge: BorderEdge }>({ x: MASCOT_MARGIN, y: MASCOT_TOP_OFFSET, edge: 'top' });
+  const motionRef = useRef<MotionState>({ x: MASCOT_MARGIN, y: MASCOT_TOP_OFFSET, edge: 'top' });
 
   const getBounds = useCallback((): Bounds => {
     const minX = MASCOT_MARGIN;
@@ -67,11 +74,50 @@ export default function FloatingCoach() {
     mascotRef.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
   }, []);
 
-  const resetPosition = useCallback(() => {
+  const projectMotionToBounds = useCallback((motion: MotionState, bounds: Bounds): MotionState => {
+    const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+    if (motion.edge === 'top') {
+      return { edge: 'top', x: clamp(motion.x, bounds.minX, bounds.maxX), y: bounds.minY };
+    }
+    if (motion.edge === 'right') {
+      return { edge: 'right', x: bounds.maxX, y: clamp(motion.y, bounds.minY, bounds.maxY) };
+    }
+    if (motion.edge === 'bottom') {
+      return { edge: 'bottom', x: clamp(motion.x, bounds.minX, bounds.maxX), y: bounds.maxY };
+    }
+    return { edge: 'left', x: bounds.minX, y: clamp(motion.y, bounds.minY, bounds.maxY) };
+  }, []);
+
+  const persistMotionState = useCallback(() => {
+    try {
+      window.sessionStorage.setItem(MASCOT_STATE_STORAGE_KEY, JSON.stringify(motionRef.current));
+    } catch {
+      // Ignore storage failures (private mode or quota limits)
+    }
+  }, []);
+
+  const restoreMotionState = useCallback(() => {
     const bounds = getBounds();
-    motionRef.current = { x: bounds.minX, y: bounds.minY, edge: 'top' };
-    applyPosition(bounds.minX, bounds.minY);
-  }, [getBounds, applyPosition]);
+    let next: MotionState = { x: bounds.minX, y: bounds.minY, edge: 'top' };
+
+    try {
+      const raw = window.sessionStorage.getItem(MASCOT_STATE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<MotionState>;
+        const isValidEdge = parsed.edge === 'top' || parsed.edge === 'right' || parsed.edge === 'bottom' || parsed.edge === 'left';
+        if (isValidEdge && Number.isFinite(parsed.x) && Number.isFinite(parsed.y)) {
+          next = { x: Number(parsed.x), y: Number(parsed.y), edge: parsed.edge };
+        }
+      }
+    } catch {
+      // Ignore invalid saved state and use fallback
+    }
+
+    const projected = projectMotionToBounds(next, bounds);
+    motionRef.current = projected;
+    applyPosition(projected.x, projected.y);
+  }, [applyPosition, getBounds, projectMotionToBounds]);
 
   const moveAlongBorder = useCallback((distance: number, bounds: Bounds) => {
     let remaining = distance;
@@ -171,10 +217,15 @@ export default function FloatingCoach() {
   useEffect(() => {
     if (!user) return;
 
-    resetPosition();
+    restoreMotionState();
     lastFrameTimeRef.current = null;
 
-    const onResize = () => resetPosition();
+    const onResize = () => {
+      const projected = projectMotionToBounds(motionRef.current, getBounds());
+      motionRef.current = projected;
+      applyPosition(projected.x, projected.y);
+      persistMotionState();
+    };
     window.addEventListener('resize', onResize);
 
     const tick = (timestamp: number) => {
@@ -196,8 +247,9 @@ export default function FloatingCoach() {
       window.removeEventListener('resize', onResize);
       if (animationFrameRef.current !== null) window.cancelAnimationFrame(animationFrameRef.current);
       lastFrameTimeRef.current = null;
+      persistMotionState();
     };
-  }, [user, getBounds, moveAlongBorder, resetPosition]);
+  }, [user, applyPosition, getBounds, moveAlongBorder, persistMotionState, projectMotionToBounds, restoreMotionState]);
 
   const onSend = async () => {
     if (!user || !input.trim() || sending) return;

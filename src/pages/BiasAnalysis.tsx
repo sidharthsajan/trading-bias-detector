@@ -34,6 +34,9 @@ export interface AnalyzeResponse {
     overtrading: number[];
     loss_aversion: number[];
     revenge_trading: number[];
+    disposition_effect: number[];
+    anchoring: number[];
+    confirmation_bias: number[];
   };
   bias_score: number;
   trades: Array<{
@@ -228,8 +231,22 @@ export default function BiasAnalysis() {
     const median = n % 2 ? scores[n >> 1] : (scores[(n >> 1) - 1] + scores[n >> 1]) / 2;
     return Math.round(Math.max(0, Math.min(100, median)));
   })();
-  const tradeFlags = apiResult?.trade_flags ?? { overtrading: [], loss_aversion: [], revenge_trading: [] };
-  const allBiasedIndices = new Set([...tradeFlags.overtrading, ...tradeFlags.loss_aversion, ...tradeFlags.revenge_trading]);
+  const tradeFlags = apiResult?.trade_flags ?? {
+    overtrading: [],
+    loss_aversion: [],
+    revenge_trading: [],
+    disposition_effect: [],
+    anchoring: [],
+    confirmation_bias: [],
+  };
+  const allBiasedIndices = new Set([
+    ...(tradeFlags.overtrading ?? []),
+    ...(tradeFlags.loss_aversion ?? []),
+    ...(tradeFlags.revenge_trading ?? []),
+    ...(tradeFlags.disposition_effect ?? []),
+    ...(tradeFlags.anchoring ?? []),
+    ...(tradeFlags.confirmation_bias ?? []),
+  ]);
   const journalTrades = apiResult?.trades ?? trades.map(t => ({
     timestamp: t.timestamp,
     buy_sell: t.action,

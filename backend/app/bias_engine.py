@@ -346,6 +346,208 @@ def detect_revenge_trading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, lis
     return result, biased_indices
 
 
+def detect_disposition_effect(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[int]]:
+    """
+    Approximate disposition effect using per-trade return proxy:
+    return ~= pnl / (quantity * price).
+    Flags when losing trades move materially further than winners before exit.
+    """
+    if COL_PNL not in df.columns or df.height < 8:
+        return None, []
+
+    n = df.height
+    notional_expr = (pl.col(COL_QUANTITY) * pl.col(COL_PRICE)).abs().replace(0.0, None)
+    df_ret = df.with_columns((pl.col(COL_PNL) / notional_expr).alias("_ret"))
+
+    wins = df_ret.filter((pl.col(COL_PNL) > 0) & pl.col("_ret").is_finite())
+    losses = df_ret.filter((pl.col(COL_PNL) < 0) & pl.col("_ret").is_finite())
+    if wins.height < 3 or losses.height < 3:
+        return None, []
+
+    avg_win_move = wins.select(pl.col("_ret").abs().mean()).item()
+    avg_loss_move = losses.select(pl.col("_ret").abs().mean()).item()
+    if avg_win_move is None or avg_loss_move is None or avg_win_move <= 0:
+        return None, []
+
+    move_ratio = float(avg_loss_move) / float(avg_win_move)
+    if move_ratio <= 1.2:
+        return None, []
+
+    loss_share = losses.height / max(n, 1)
+    score = min(100, max(0.0, (move_ratio - 1.0) * 55) + min(35, loss_share * 35))
+    if score < 15:
+        return None, []
+
+    # Biased rows: losses whose return magnitude is larger than typical winner move.
+    df_idx = df_ret.with_columns(pl.int_range(0, n).alias("_row_idx"))
+    biased_indices = (
+        df_idx.filter((pl.col(COL_PNL) < 0) & (pl.col("_ret").abs() >= float(avg_win_move)))
+        .select("_row_idx")
+        .to_series()
+        .to_list()
+    )
+
+    severity = "critical" if score > 75 else "high" if score > 50 else "medium" if score > 25 else "low"
+    result = {
+        "type": "disposition_effect",
+        "severity": severity,
+        "title": "Disposition Effect",
+        "description": (
+            f"Losing trades moved {move_ratio:.2f}x further than winners before exit "
+            f"(avg loser move {float(avg_loss_move) * 100:.2f}% vs winner move {float(avg_win_move) * 100:.2f}%)."
+        ),
+        "details": {
+            "avg_winner_move_pct": round(float(avg_win_move) * 100, 2),
+            "avg_loser_move_pct": round(float(avg_loss_move) * 100, 2),
+            "loser_to_winner_move_ratio": round(move_ratio, 2),
+            "flagged_trade_count": len(biased_indices),
+            "strategy_primary": "Define take-profit and stop-loss before entry and do not move either in-flight.",
+            "strategy_secondary": "Use partial scaling rules so winners are not exited immediately on first green tick.",
+        },
+        "score": round(score),
+    }
+    return result, biased_indices
+
+
+def detect_anchoring_bias(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[int]]:
+    """
+    Detect anchoring when the same asset is repeatedly traded at very similar price levels
+    (low coefficient of variation), suggesting fixed-price fixation.
+    """
+    if df.height < 10:
+        return None, []
+
+    n = df.height
+    grouped = (
+        df.group_by(COL_ASSET)
+        .agg(
+            pl.len().alias("_count"),
+            pl.col(COL_PRICE).mean().alias("_mean_price"),
+            pl.col(COL_PRICE).std().fill_null(0.0).alias("_std_price"),
+        )
+        .filter((pl.col("_count") >= 4) & (pl.col("_mean_price") > 0))
+        .with_columns((pl.col("_std_price") / pl.col("_mean_price")).alias("_cv"))
+    )
+    if grouped.height == 0:
+        return None, []
+
+    anchored_assets_df = grouped.filter(pl.col("_cv") <= 0.06)
+    if anchored_assets_df.height == 0:
+        return None, []
+
+    anchored_assets = anchored_assets_df.select(COL_ASSET).to_series().to_list()
+    anchored_trade_count = df.filter(pl.col(COL_ASSET).is_in(anchored_assets)).height
+    anchored_share = anchored_trade_count / max(n, 1)
+    avg_cv = anchored_assets_df.select(pl.col("_cv").mean()).item() or 0.0
+    tightness = max(0.0, (0.08 - float(avg_cv)) / 0.08)
+    score = min(100, anchored_share * 70 + tightness * 20 + anchored_assets_df.height * 6)
+    if score < 15:
+        return None, []
+
+    df_idx = df.with_columns(pl.int_range(0, n).alias("_row_idx"))
+    biased_indices = (
+        df_idx.filter(pl.col(COL_ASSET).is_in(anchored_assets))
+        .select("_row_idx")
+        .to_series()
+        .to_list()
+    )
+
+    severity = "critical" if score > 75 else "high" if score > 50 else "medium" if score > 25 else "low"
+    result = {
+        "type": "anchoring",
+        "severity": severity,
+        "title": "Anchoring Bias",
+        "description": (
+            f"You repeatedly entered {anchored_assets_df.height} asset(s) around near-identical levels "
+            f"(avg price-variation CV {float(avg_cv) * 100:.2f}%), suggesting anchor fixation."
+        ),
+        "details": {
+            "anchored_asset_count": anchored_assets_df.height,
+            "anchored_trade_count": anchored_trade_count,
+            "anchored_trade_share_pct": round(anchored_share * 100, 2),
+            "anchored_assets": ", ".join(str(asset) for asset in anchored_assets[:6]),
+            "strategy_primary": "Use scenario-based entry zones instead of one anchor price.",
+            "strategy_secondary": "Require a fresh confirmation checklist when price revisits old levels.",
+        },
+        "score": round(score),
+    }
+    return result, biased_indices
+
+
+def detect_confirmation_bias(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[int]]:
+    """
+    Detect directional confirmation bias by asset:
+    repeatedly taking one side (buy or sell) despite mixed outcomes.
+    """
+    if df.height < 10:
+        return None, []
+
+    n = df.height
+    by_asset = (
+        df.group_by(COL_ASSET)
+        .agg(
+            pl.len().alias("_count"),
+            (pl.col(COL_ACTION) == "buy").sum().alias("_buy_count"),
+            (pl.col(COL_ACTION) == "sell").sum().alias("_sell_count"),
+        )
+        .filter(pl.col("_count") >= 4)
+        .with_columns(
+            pl.max_horizontal(pl.col("_buy_count"), pl.col("_sell_count")).alias("_dominant_count"),
+            pl.when(pl.col("_buy_count") >= pl.col("_sell_count"))
+            .then(pl.lit("buy"))
+            .otherwise(pl.lit("sell"))
+            .alias("_dominant_side"),
+        )
+        .with_columns((pl.col("_dominant_count") / pl.col("_count")).alias("_dominant_ratio"))
+    )
+    if by_asset.height == 0:
+        return None, []
+
+    biased_assets_df = by_asset.filter(pl.col("_dominant_ratio") >= 0.82)
+    if biased_assets_df.height == 0:
+        return None, []
+
+    df_idx = df.with_columns(pl.int_range(0, n).alias("_row_idx"))
+    joined = df_idx.join(
+        biased_assets_df.select([COL_ASSET, "_dominant_side"]),
+        on=COL_ASSET,
+        how="inner",
+    )
+    biased_indices = (
+        joined.filter(pl.col(COL_ACTION) == pl.col("_dominant_side"))
+        .select("_row_idx")
+        .to_series()
+        .to_list()
+    )
+
+    biased_trade_share = len(biased_indices) / max(n, 1)
+    avg_ratio = float(biased_assets_df.select(pl.col("_dominant_ratio").mean()).item() or 0.0)
+    score = min(100, biased_trade_share * 65 + max(0.0, avg_ratio - 0.7) * 100 + biased_assets_df.height * 5)
+    if score < 15:
+        return None, []
+
+    severity = "critical" if score > 75 else "high" if score > 50 else "medium" if score > 25 else "low"
+    result = {
+        "type": "confirmation_bias",
+        "severity": severity,
+        "title": "Confirmation Bias",
+        "description": (
+            f"{biased_assets_df.height} asset(s) show persistent one-sided directionality "
+            f"(avg dominant-side ratio {avg_ratio * 100:.1f}%), indicating thesis-only execution."
+        ),
+        "details": {
+            "biased_asset_count": biased_assets_df.height,
+            "biased_trade_count": len(biased_indices),
+            "biased_trade_share_pct": round(biased_trade_share * 100, 2),
+            "avg_dominant_side_ratio_pct": round(avg_ratio * 100, 2),
+            "strategy_primary": "Add a mandatory disconfirming-evidence checklist before each entry.",
+            "strategy_secondary": "Block same-side re-entries unless market structure changed from prior setup.",
+        },
+        "score": round(score),
+    }
+    return result, biased_indices
+
+
 def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
     """
     Single entry point: preprocess CSV, then run all bias detectors and return biases, trade_flags, bias_score, and trades.
@@ -355,7 +557,14 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
     if df.height == 0:
         return {
             "biases": [],
-            "trade_flags": {"overtrading": [], "loss_aversion": [], "revenge_trading": []},
+            "trade_flags": {
+                "overtrading": [],
+                "loss_aversion": [],
+                "revenge_trading": [],
+                "disposition_effect": [],
+                "anchoring": [],
+                "confirmation_bias": [],
+            },
             "bias_score": 0,
             "trades": [],
             "total_trades": 0,
@@ -389,6 +598,9 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
     ot_result, ot_indices = detect_overtrading(df)
     la_result, la_indices = detect_loss_aversion(df)
     rv_result, rv_indices = detect_revenge_trading(df)
+    dp_result, dp_indices = detect_disposition_effect(df)
+    an_result, an_indices = detect_anchoring_bias(df)
+    cf_result, cf_indices = detect_confirmation_bias(df)
 
     biases = []
     if ot_result:
@@ -397,6 +609,12 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
         biases.append(la_result)
     if rv_result:
         biases.append(rv_result)
+    if dp_result:
+        biases.append(dp_result)
+    if an_result:
+        biases.append(an_result)
+    if cf_result:
+        biases.append(cf_result)
     biases.sort(key=lambda b: b["score"], reverse=True)
 
     # Aggregate bias score 0-100 (median so one severe bias doesn't force overall to 100)
@@ -413,6 +631,9 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
         "overtrading": ot_indices,
         "loss_aversion": la_indices,
         "revenge_trading": rv_indices,
+        "disposition_effect": dp_indices,
+        "anchoring": an_indices,
+        "confirmation_bias": cf_indices,
     }
 
     return {

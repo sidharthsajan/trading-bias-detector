@@ -1,6 +1,7 @@
 """
 FastAPI app for National Bank Bias Detector.
-POST /analyze: accept CSV upload, run bias engine, return JSON (biases, trade_flags, bias_score, trades).
+POST /analyze: accept CSV upload, run bias engine, return JSON (biases, trade_flags, bias_score, trades)
+for overtrading, loss aversion, revenge trading, disposition effect, anchoring, and confirmation bias.
 """
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +10,10 @@ from app.bias_engine import parse_csv_to_dataframe, run_analysis
 
 app = FastAPI(
     title="National Bank Bias Detector API",
-    description="Analyze trading CSV for behavioral biases (overtrading, loss aversion, revenge trading).",
+    description=(
+        "Analyze trading CSV for behavioral biases "
+        "(overtrading, loss aversion, revenge trading, disposition effect, anchoring, confirmation bias)."
+    ),
     version="0.1.0",
 )
 

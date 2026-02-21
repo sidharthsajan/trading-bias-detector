@@ -205,7 +205,13 @@ export function detectDispositionEffect(trades: Trade[]): BiasResult | null {
     severity,
     title: 'Disposition Effect',
     description: `Your losing trades move ${(ratio).toFixed(1)}x further than your winners before closing, suggesting you hold losers too long while selling winners prematurely.`,
-    details: { avgWinPctMove: (avgWinPctMove * 100).toFixed(2), avgLossPctMove: (avgLossPctMove * 100).toFixed(2), ratio: ratio.toFixed(2) },
+    details: {
+      avgWinPctMove: (avgWinPctMove * 100).toFixed(2),
+      avgLossPctMove: (avgLossPctMove * 100).toFixed(2),
+      ratio: ratio.toFixed(2),
+      strategyPrimary: 'Predefine both take-profit and stop-loss before entry and keep them fixed during the trade.',
+      strategySecondary: 'Scale out winners using fixed rules instead of closing full size on the first positive move.',
+    },
     score: Math.round(score),
   };
 }
@@ -239,7 +245,11 @@ export function detectAnchoringBias(trades: Trade[]): BiasResult | null {
     severity,
     title: 'Anchoring Bias',
     description: `You appear anchored to specific price levels in ${anchoredAssets} asset(s), repeatedly entering at nearly identical prices regardless of market conditions.`,
-    details: { anchoredAssets },
+    details: {
+      anchoredAssets,
+      strategyPrimary: 'Define entry zones with confirmation triggers, not a single anchor price.',
+      strategySecondary: 'Require a fresh checklist before re-entering near previously traded levels.',
+    },
     score: Math.round(score),
   };
 }
@@ -273,7 +283,12 @@ export function detectConfirmationBias(trades: Trade[]): BiasResult | null {
     severity,
     title: 'Confirmation Bias',
     description: `You show a strong directional preference in ${biasedAssets} asset(s), consistently trading one direction despite mixed market signals.`,
-    details: { biasedAssets, assetDirections },
+    details: {
+      biasedAssets,
+      assetDirections,
+      strategyPrimary: 'Write one disconfirming reason before every trade and size down if you cannot.',
+      strategySecondary: 'Block same-side re-entries unless market structure has clearly changed.',
+    },
     score: Math.round(score),
   };
 }

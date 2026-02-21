@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { fetchAllTradesForUser } from '@/lib/trades';
+import { fetchAllTradesForUser, fetchTradeCountForUser } from '@/lib/trades';
 import { calculateRiskProfile, runFullAnalysis, type Trade } from '@/lib/biasDetection';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { Shield, TrendingUp, Zap, Brain, Heart, Target, RefreshCw, Loader2 } from 'lucide-react';
+
+const RISK_PROFILE_ANALYSIS_LIMIT = 3000;
 
 const metrics = [
   { key: 'overall_score', label: 'Overall Score', icon: Shield, desc: 'Your composite risk behavior score' },
@@ -45,15 +47,15 @@ export default function RiskProfile() {
     if (!user) return;
     setLoading(true);
     try {
-      const [profileRes, allTrades] = await Promise.all([
+      const [profileRes, totalTrades] = await Promise.all([
         supabase.from('risk_profiles').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(10),
-        fetchAllTradesForUser(user.id),
+        fetchTradeCountForUser(user.id),
       ]);
 
       if (profileRes.error) throw profileRes.error;
 
       setProfiles(profileRes.data || []);
-      setTradeCount(allTrades.length);
+      setTradeCount(totalTrades);
     } catch (error: any) {
       toast({ title: 'Failed to load risk profile', description: error?.message || 'Unknown error', variant: 'destructive' });
     } finally {
@@ -70,14 +72,17 @@ export default function RiskProfile() {
     if (!user) return;
     setGenerating(true);
     try {
-      const allTrades = await fetchAllTradesForUser(user.id);
-      if (allTrades.length < 5) {
+      const [totalTrades, tradesForAnalysis] = await Promise.all([
+        fetchTradeCountForUser(user.id),
+        fetchAllTradesForUser(user.id, RISK_PROFILE_ANALYSIS_LIMIT),
+      ]);
+
+      if (totalTrades < 5) {
         toast({ title: 'Not enough data', description: 'Add at least 5 trades to generate a risk profile.', variant: 'destructive' });
-        setGenerating(false);
         return;
       }
 
-      const analysisTrades = mapTradesForAnalysis(allTrades);
+      const analysisTrades = mapTradesForAnalysis(tradesForAnalysis);
       const biases = runFullAnalysis(analysisTrades);
       const profile = calculateRiskProfile(analysisTrades, biases);
 
@@ -99,8 +104,15 @@ export default function RiskProfile() {
       if (error) throw error;
 
       setProfiles((prev) => [data, ...prev].slice(0, 10));
-      setTradeCount(allTrades.length);
-      toast({ title: 'Risk profile updated', description: 'Latest behavioral profile generated from your full trade history.' });
+      setTradeCount(totalTrades);
+      const usedCount = tradesForAnalysis.length;
+      const usedSubset = totalTrades > usedCount;
+      toast({
+        title: 'Risk profile updated',
+        description: usedSubset
+          ? `Generated from your latest ${usedCount.toLocaleString()} of ${totalTrades.toLocaleString()} trades for faster performance.`
+          : 'Latest behavioral profile generated from your full trade history.',
+      });
     } catch (error: any) {
       toast({ title: 'Risk profile generation failed', description: error?.message || 'Unknown error', variant: 'destructive' });
     } finally {

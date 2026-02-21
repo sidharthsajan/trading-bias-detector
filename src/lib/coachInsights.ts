@@ -190,16 +190,35 @@ const computeSuggestions = (
   avgWin: number,
   avgLoss: number,
   revengeTradeCount: number,
+  biases: InsightBias[],
 ): InsightSuggestion[] => {
+  const hasDisposition = biases.some((bias) => {
+    const type = (bias.analysis_type || '').toLowerCase();
+    const title = (bias.title || '').toLowerCase();
+    return type.includes('disposition') || title.includes('disposition');
+  });
+  const hasAnchoring = biases.some((bias) => {
+    const type = (bias.analysis_type || '').toLowerCase();
+    const title = (bias.title || '').toLowerCase();
+    return type.includes('anchoring') || title.includes('anchoring');
+  });
+  const hasConfirmation = biases.some((bias) => {
+    const type = (bias.analysis_type || '').toLowerCase();
+    const title = (bias.title || '').toLowerCase();
+    return type.includes('confirmation') || title.includes('confirmation');
+  });
+
   const limit = Math.max(3, Math.round(Math.max(avgTradesPerDay, 4) * 0.75));
   const coolingMinutes = revengeTradeCount >= 3 ? 45 : 20;
 
   const stopLossRecommendation =
-    avgLoss > avgWin && avgWin > 0
+    hasDisposition
+      ? 'Disposition bias is active: place both stop-loss and take-profit orders at entry, and avoid exiting full winners on first green candles.'
+      : avgLoss > avgWin && avgWin > 0
       ? `Average loss is larger than average win (${avgLoss.toFixed(2)} vs ${avgWin.toFixed(2)}). Use hard stop-loss rules before entry and do not widen stops intraday.`
       : 'Set a fixed stop-loss on every trade (for example 1R max risk) and avoid discretionary widening once in position.';
 
-  return [
+  const suggestions: InsightSuggestion[] = [
     {
       title: 'Daily trade limits',
       recommendation: `Set a hard cap of ${limit} trades per day. Stop opening new positions after that limit unless you complete a written post-trade review first.`,
@@ -217,6 +236,22 @@ const computeSuggestions = (
       recommendation: 'Capture pre-trade emotion, rule adherence, and post-trade review quality on every high-impact trade.',
     },
   ];
+
+  if (hasAnchoring) {
+    suggestions.push({
+      title: 'Anchoring controls',
+      recommendation: 'Trade price zones instead of fixed anchor numbers, and require a fresh trigger checklist before re-entering at old levels.',
+    });
+  }
+
+  if (hasConfirmation) {
+    suggestions.push({
+      title: 'Confirmation checks',
+      recommendation: 'Write one disconfirming thesis for each setup; if none exists, reduce size or skip the trade.',
+    });
+  }
+
+  return suggestions;
 };
 
 const computeJournalingPrompts = (biases: InsightBias[]): string[] => {
@@ -320,7 +355,7 @@ export function buildCoachInsights(trades: InsightTrade[], biases: InsightBias[]
 
   return {
     biasSummaries: computeBiasSummaries(biases, highVolatilityFollowUps),
-    suggestions: computeSuggestions(avgTradesPerDay, avgWin, avgLoss, revengeTradeCount),
+    suggestions: computeSuggestions(avgTradesPerDay, avgWin, avgLoss, revengeTradeCount, biases),
     journalingPrompts: computeJournalingPrompts(biases),
     timeline: computeTimeline(validTrades),
     heatmap: computeHeatmap(validTrades),

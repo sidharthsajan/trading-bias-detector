@@ -6,7 +6,7 @@ type TradeRow = Database['public']['Tables']['trades']['Row'];
 const TRADE_PAGE_SIZE = 1000;
 const UI_PAGE_SIZE = 100;
 const CACHE_TTL_MS = 30_000;
-const DELETE_BATCH_SIZE = 1000;
+const DELETE_BATCH_SIZE = 20;
 /** Max trades to load for dashboard (keeps navigation fast after large uploads) */
 export const DASHBOARD_TRADE_LIMIT = 10_000;
 
@@ -56,9 +56,21 @@ type ClearTradesResult = {
  * Clears all trades for a user in bounded batches to avoid oversized delete operations.
  */
 export async function clearTradesForUser(userId: string): Promise<ClearTradesResult> {
-  let deletedCount = 0;
+  const beforeCount = await fetchTradeCountForUser(userId);
+  if (beforeCount === 0) {
+    return { deletedCount: 0, remainingCount: 0 };
+  }
 
-  while (true) {
+  // Fast path: one server-side delete for all rows.
+  // If this does not fully clear rows, we fall back to small verified batches.
+  const { error: bulkDeleteError } = await supabase.from('trades').delete().eq('user_id', userId);
+  let remainingCount = await fetchTradeCountForUser(userId);
+  if (remainingCount === 0) {
+    return { deletedCount: beforeCount, remainingCount: 0 };
+  }
+
+  const maxPasses = Math.ceil(beforeCount / DELETE_BATCH_SIZE) + 10;
+  for (let pass = 0; pass < maxPasses && remainingCount > 0; pass += 1) {
     const { data: idRows, error: idError } = await supabase
       .from('trades')
       .select('id')
@@ -70,24 +82,33 @@ export async function clearTradesForUser(userId: string): Promise<ClearTradesRes
     const ids = (idRows || []).map((row) => row.id).filter(Boolean);
     if (ids.length === 0) break;
 
-    const { data: deletedRows, error: deleteError } = await supabase
+    const { error: batchDeleteError } = await supabase
       .from('trades')
       .delete()
       .eq('user_id', userId)
-      .in('id', ids)
-      .select('id');
+      .in('id', ids);
+    if (batchDeleteError) throw batchDeleteError;
 
-    if (deleteError) throw deleteError;
+    // Verify this exact batch was removed to avoid infinite loops on partial failures.
+    const { count: stillPresentCount, error: verifyError } = await supabase
+      .from('trades')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .in('id', ids);
+    if (verifyError) throw verifyError;
+    if ((stillPresentCount ?? 0) > 0) {
+      throw new Error('Unable to clear selected trades. Please try again.');
+    }
 
-    const deletedThisBatch = deletedRows?.length ?? 0;
-    deletedCount += deletedThisBatch;
-
-    // Safety guard: stop if no progress is made in a batch.
-    if (deletedThisBatch === 0) break;
+    remainingCount = await fetchTradeCountForUser(userId);
   }
 
-  const remainingCount = await fetchTradeCountForUser(userId);
-  return { deletedCount, remainingCount };
+  if (remainingCount > 0) {
+    if (bulkDeleteError) throw bulkDeleteError;
+    throw new Error(`Unable to clear all trades. ${remainingCount} trade(s) remain.`);
+  }
+
+  return { deletedCount: beforeCount - remainingCount, remainingCount };
 }
 
 export async function fetchAllTradesForUser(userId: string, maxRows?: number): Promise<TradeRow[]> {

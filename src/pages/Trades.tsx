@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { clearTradesForUser, fetchTradesPageForUser, invalidateTradeCache } from '@/lib/trades';
+import { clearTradesForUser, fetchTradeCountForUser, fetchTradesPageForUser, invalidateTradeCache } from '@/lib/trades';
 import { formatMoney } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ export default function Trades() {
   const { toast } = useToast();
   const [trades, setTrades] = useState<any[]>([]);
   const [totalCount, setTotalCount] = useState(0);
+  const [allTradeCount, setAllTradeCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
@@ -42,9 +43,13 @@ export default function Trades() {
     else setLoading(true);
 
     try {
-      const { trades: pageRows, totalCount: count } = await fetchTradesPageForUser(user.id, targetPage, PAGE_SIZE, search);
+      const [{ trades: pageRows, totalCount: count }, absoluteCount] = await Promise.all([
+        fetchTradesPageForUser(user.id, targetPage, PAGE_SIZE, search),
+        fetchTradeCountForUser(user.id),
+      ]);
       setTrades(pageRows);
       setTotalCount(count);
+      setAllTradeCount(absoluteCount);
     } catch (error: any) {
       toast({ title: 'Failed to load trades', description: error?.message || 'Unknown error', variant: 'destructive' });
     } finally {
@@ -92,6 +97,7 @@ export default function Trades() {
       if (error) throw error;
 
       invalidateTradeCache(user.id);
+      setAllTradeCount((prev) => Math.max((prev ?? 1) - 1, 0));
       const nextTotal = Math.max(totalCount - 1, 0);
       const nextPage = Math.min(page, Math.max(1, Math.ceil(nextTotal / PAGE_SIZE)));
       setPage(nextPage);
@@ -105,7 +111,8 @@ export default function Trades() {
   };
 
   const clearAllTrades = async () => {
-    if (!user || totalCount === 0) return;
+    const knownAllCount = allTradeCount ?? totalCount;
+    if (!user || knownAllCount === 0) return;
     const confirmDelete = window.confirm('Clear all saved trades? This action cannot be undone.');
     if (!confirmDelete) return;
 
@@ -128,6 +135,7 @@ export default function Trades() {
 
       setTrades([]);
       setTotalCount(0);
+      setAllTradeCount(0);
       setPage(1);
       toast({
         title: 'All trades cleared',
@@ -139,6 +147,8 @@ export default function Trades() {
       setDeletingAll(false);
     }
   };
+
+  const knownAllCount = allTradeCount ?? totalCount;
 
   if (loading) {
     return (
@@ -163,7 +173,7 @@ export default function Trades() {
               {refreshing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
               Refresh
             </Button>
-            <Button variant="destructive" onClick={clearAllTrades} disabled={deletingAll || totalCount === 0}>
+            <Button variant="destructive" onClick={clearAllTrades} disabled={deletingAll || knownAllCount === 0}>
               {deletingAll ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
               Clear Trades
             </Button>
