@@ -81,6 +81,73 @@ def parse_csv_to_dataframe(csv_bytes: bytes) -> pl.DataFrame:
     return df
 
 
+def preprocess_trades(df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, Any]]:
+    """
+    Clean and preprocess the trades DataFrame: drop invalid rows, remove outliers (IQR),
+    and deduplicate. Returns (cleaned_df, stats_dict) for transparency.
+    """
+    stats: dict[str, Any] = {"rows_before": df.height, "dropped_invalid": 0, "dropped_outliers": 0, "dropped_duplicates": 0}
+    if df.height == 0:
+        return df, stats
+
+    # 1. Drop rows with null/invalid required columns
+    valid_ts = pl.col(COL_TIMESTAMP).is_not_null()
+    valid_action = pl.col(COL_ACTION).is_in(["buy", "sell"])
+    valid_asset = pl.col(COL_ASSET).is_not_null() & (pl.col(COL_ASSET).str.strip_chars() != "")
+    valid_qty = pl.col(COL_QUANTITY).is_not_null() & pl.col(COL_QUANTITY).is_finite() & (pl.col(COL_QUANTITY) > 0)
+    valid_price = pl.col(COL_PRICE).is_not_null() & pl.col(COL_PRICE).is_finite() & (pl.col(COL_PRICE) > 0)
+
+    df = df.filter(valid_ts & valid_action & valid_asset & valid_qty & valid_price)
+    if df.height == 0:
+        stats["rows_after"] = 0
+        return df, stats
+
+    # 2. Reasonable timestamp range (e.g. 1990–2030)
+    try:
+        min_ts = 631152000  # 1990-01-01
+        max_ts = 1893456000  # 2030-01-01
+        df = df.filter((pl.col(COL_TIMESTAMP).dt.epoch(time_unit="s") >= min_ts) & (pl.col(COL_TIMESTAMP).dt.epoch(time_unit="s") <= max_ts))
+    except Exception:
+        pass
+    stats["dropped_invalid"] = stats["rows_before"] - df.height
+
+    # 3. Remove numeric outliers (IQR) for P/L and Balance
+    for col in [COL_PNL, COL_BALANCE]:
+        if col not in df.columns or df.height < 10:
+            continue
+        s = df.select(pl.col(col)).to_series()
+        s_clean = s.drop_nulls()
+        if s_clean.len() < 10:
+            continue
+        q1_val = s_clean.quantile(0.25)
+        q3_val = s_clean.quantile(0.75)
+        if q1_val is None or q3_val is None:
+            continue
+        q1 = float(q1_val) if hasattr(q1_val, "__float__") else q1_val
+        q3 = float(q3_val) if hasattr(q3_val, "__float__") else q3_val
+        iqr = q3 - q1
+        if iqr <= 0:
+            continue
+        low = q1 - 1.5 * iqr
+        high = q3 + 1.5 * iqr
+        before = df.height
+        df = df.filter(
+            pl.when(pl.col(col).is_null())
+            .then(pl.lit(True))
+            .otherwise((pl.col(col) >= low) & (pl.col(col) <= high))
+        )
+        stats["dropped_outliers"] += before - df.height
+
+    # 4. Drop duplicate rows (same timestamp, asset, action, quantity, price)
+    before = df.height
+    df = df.unique(subset=[COL_TIMESTAMP, COL_ASSET, COL_ACTION, COL_QUANTITY, COL_PRICE])
+    stats["dropped_duplicates"] = before - df.height
+    stats["rows_after"] = df.height
+
+    df = df.sort(COL_TIMESTAMP)
+    return df, stats
+
+
 def detect_overtrading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[int]]:
     """
     Flag users if trade frequency exceeds 5 trades/hour or if they trade >10% of balance per ticket.
@@ -263,9 +330,19 @@ def detect_revenge_trading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, lis
 
 def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
     """
-    Single entry point: run all bias detectors and return biases, trade_flags, bias_score, and trades for the frontend.
+    Single entry point: preprocess CSV, then run all bias detectors and return biases, trade_flags, bias_score, and trades.
     Designed so a future run_sentiment() or sentiment module can be composed here.
     """
+    df, preprocess_stats = preprocess_trades(df)
+    if df.height == 0:
+        return {
+            "biases": [],
+            "trade_flags": {"overtrading": [], "loss_aversion": [], "revenge_trading": []},
+            "bias_score": 0,
+            "trades": [],
+            "preprocess": preprocess_stats,
+        }
+
     select_exprs = [
         pl.col(COL_TIMESTAMP).dt.strftime("%Y-%m-%dT%H:%M:%S").alias("timestamp"),
         pl.col(COL_ACTION).alias("buy_sell"),
@@ -311,4 +388,5 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
         "trade_flags": trade_flags,
         "bias_score": bias_score,
         "trades": trades_out,
+        "preprocess": preprocess_stats,
     }

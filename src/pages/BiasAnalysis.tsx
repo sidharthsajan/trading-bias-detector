@@ -36,6 +36,13 @@ export interface AnalyzeResponse {
     p_l: number | null;
     balance: number | null;
   }>;
+  preprocess?: {
+    rows_before: number;
+    rows_after: number;
+    dropped_invalid: number;
+    dropped_outliers: number;
+    dropped_duplicates: number;
+  };
 }
 
 const severityConfig: Record<string, { color: string; icon: string }> = {
@@ -208,6 +215,20 @@ export default function BiasAnalysis() {
           <h1 className="text-3xl font-display font-bold">Bias Analysis</h1>
           <p className="text-muted-foreground mt-1">Upload a CSV or use saved trades to detect behavioral biases</p>
         </div>
+
+        {/* Preprocessing summary */}
+        {apiResult?.preprocess && (apiResult.preprocess.rows_before !== apiResult.preprocess.rows_after || apiResult.preprocess.dropped_invalid > 0 || apiResult.preprocess.dropped_outliers > 0 || apiResult.preprocess.dropped_duplicates > 0) && (
+          <Card className="glass-card border-muted">
+            <CardContent className="pt-6">
+              <p className="text-sm text-muted-foreground">
+                <strong>CSV preprocessed:</strong> {apiResult.preprocess.rows_before} → {apiResult.preprocess.rows_after} rows
+                {(apiResult.preprocess.dropped_invalid > 0 || apiResult.preprocess.dropped_outliers > 0 || apiResult.preprocess.dropped_duplicates > 0) && (
+                  <> (removed {apiResult.preprocess.dropped_invalid} invalid, {apiResult.preprocess.dropped_outliers} outliers, {apiResult.preprocess.dropped_duplicates} duplicates)</>
+                )}
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Bias Score radial gauge */}
         {(apiResult || displayResults.length > 0) && (
