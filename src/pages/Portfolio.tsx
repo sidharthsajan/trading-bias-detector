@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { formatMoney } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Shield, TrendingUp, TrendingDown, BarChart3 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
@@ -27,7 +28,7 @@ export default function Portfolio() {
     assetPositions[t.asset].count++;
   });
   const allocationData = Object.entries(assetPositions)
-    .map(([name, { value }]) => ({ name, value: Math.round(Math.abs(value)) }))
+    .map(([name, { value }]) => ({ name, value: Math.round(Math.abs(value) * 100) / 100 }))
     .sort((a, b) => b.value - a.value);
 
   // PnL over time
@@ -67,7 +68,7 @@ export default function Portfolio() {
               <Card className="glass-card">
                 <CardContent className="pt-6 text-center">
                   <p className="text-sm text-muted-foreground">Total Volume</p>
-                  <p className="text-2xl font-display font-bold">${totalValue.toLocaleString()}</p>
+                  <p className="text-2xl font-display font-bold">{formatMoney(totalValue)}</p>
                 </CardContent>
               </Card>
               <Card className="glass-card">
@@ -96,7 +97,7 @@ export default function Portfolio() {
                       <Pie data={allocationData} cx="50%" cy="50%" outerRadius={100} innerRadius={50} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
                         {allocationData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(v: number) => `$${v.toLocaleString()}`} />
+                      <Tooltip formatter={(v: number) => formatMoney(v)} />
                     </PieChart>
                   </ResponsiveContainer>
                 </CardContent>
@@ -112,8 +113,11 @@ export default function Portfolio() {
                       <LineChart data={pnlTimeline}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                         <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                        <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} />
+                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickFormatter={(value) => formatMoney(value)} />
+                        <Tooltip
+                          formatter={(value: number) => formatMoney(value)}
+                          contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }}
+                        />
                         <Line type="monotone" dataKey="pnl" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
                       </LineChart>
                     </ResponsiveContainer>

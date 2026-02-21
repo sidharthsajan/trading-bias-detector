@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { formatMoney } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BarChart3, Upload, Brain, TrendingUp, TrendingDown, Activity, AlertTriangle } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, ReferenceLine } from 'recharts';
 
 const COLORS = ['hsl(350, 84%, 46%)', 'hsl(220, 25%, 14%)', 'hsl(160, 60%, 45%)', 'hsl(40, 90%, 55%)', 'hsl(270, 60%, 55%)'];
 
@@ -16,6 +18,7 @@ export default function Dashboard() {
   const [trades, setTrades] = useState<any[]>([]);
   const [biases, setBiases] = useState<any[]>([]);
   const [riskProfile, setRiskProfile] = useState<any>(null);
+  const [selectedAsset, setSelectedAsset] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -42,12 +45,49 @@ export default function Dashboard() {
 
   const criticalBiases = biases.filter(b => b.severity === 'critical' || b.severity === 'high');
 
-  // PnL by asset chart data
-  const pnlByAsset: Record<string, number> = {};
-  trades.forEach(t => {
-    pnlByAsset[t.asset] = (pnlByAsset[t.asset] || 0) + (t.pnl || 0);
-  });
-  const chartData = Object.entries(pnlByAsset).map(([asset, pnl]) => ({ asset, pnl: Math.round(pnl * 100) / 100 }));
+  const assetSymbols = useMemo(
+    () =>
+      Array.from(new Set(trades.filter((t) => t.asset && t.pnl !== null).map((t) => t.asset as string))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [trades],
+  );
+
+  useEffect(() => {
+    if (assetSymbols.length === 0) {
+      setSelectedAsset('');
+      return;
+    }
+    if (!selectedAsset || !assetSymbols.includes(selectedAsset)) {
+      setSelectedAsset(assetSymbols[0]);
+    }
+  }, [assetSymbols, selectedAsset]);
+
+  const stockIndexData = useMemo(() => {
+    if (!selectedAsset) return [];
+
+    const selectedTrades = trades
+      .filter((t) => t.asset === selectedAsset && t.pnl !== null)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    let index = 100;
+    let cumulativePnl = 0;
+
+    return selectedTrades.map((trade) => {
+      const pnl = Number(trade.pnl) || 0;
+      const notional = Math.max(Math.abs((Number(trade.quantity) || 0) * (Number(trade.entry_price) || 0)), 1);
+      const pctMove = (pnl / notional) * 100;
+      cumulativePnl += pnl;
+      index = Math.max(1, index + pctMove);
+
+      return {
+        timestamp: new Date(trade.timestamp).getTime(),
+        index: Math.round(index * 100) / 100,
+        pnl: Math.round(pnl * 100) / 100,
+        cumulativePnl: Math.round(cumulativePnl * 100) / 100,
+      };
+    });
+  }, [trades, selectedAsset]);
 
   const biasDistribution = biases.reduce((acc: Record<string, number>, b) => {
     acc[b.analysis_type] = (acc[b.analysis_type] || 0) + 1;
@@ -82,7 +122,7 @@ export default function Dashboard() {
                 <div>
                   <p className="text-sm text-muted-foreground">Total P/L</p>
                   <p className={`text-3xl font-display font-bold ${totalPnl >= 0 ? 'text-success' : 'text-destructive'}`}>
-                    ${totalPnl.toFixed(2)}
+                    {formatMoney(totalPnl)}
                   </p>
                 </div>
                 {totalPnl >= 0 ? <TrendingUp className="w-10 h-10 text-success/30" /> : <TrendingDown className="w-10 h-10 text-destructive/30" />}
@@ -126,27 +166,72 @@ export default function Dashboard() {
           </Card>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* PnL by Asset */}
+            {/* P/L Index by Stock */}
             <Card className="glass-card">
-              <CardHeader>
-                <CardTitle className="font-display">P/L by Asset</CardTitle>
+              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle className="font-display">P/L Index by Stock</CardTitle>
+                <div className="w-full sm:w-56">
+                  <Select value={selectedAsset} onValueChange={setSelectedAsset} disabled={assetSymbols.length === 0}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select stock" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {assetSymbols.map((asset) => (
+                        <SelectItem key={asset} value={asset}>
+                          {asset}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="asset" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                    <Tooltip
-                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }}
-                    />
-                    <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
-                      {chartData.map((entry, i) => (
-                        <Cell key={i} fill={entry.pnl >= 0 ? 'hsl(160, 60%, 45%)' : 'hsl(350, 84%, 46%)'} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                {stockIndexData.length > 0 ? (
+                  <>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      {selectedAsset} lifespan, normalized to index 100 at first trade
+                    </p>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={stockIndexData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <ReferenceLine y={100} stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" />
+                        <XAxis
+                          dataKey="timestamp"
+                          type="number"
+                          domain={['dataMin', 'dataMax']}
+                          tickFormatter={(value) => new Date(Number(value)).toLocaleDateString()}
+                          stroke="hsl(var(--muted-foreground))"
+                          fontSize={11}
+                        />
+                        <YAxis
+                          stroke="hsl(var(--muted-foreground))"
+                          fontSize={11}
+                          domain={['auto', 'auto']}
+                          tickFormatter={(value) => `${Number(value).toFixed(0)}`}
+                        />
+                        <Tooltip
+                          labelFormatter={(value) => new Date(Number(value)).toLocaleString()}
+                          formatter={(value: number, name: string, payload: any) => {
+                            if (name === 'index') return [`${Number(value).toFixed(2)}`, 'Index'];
+                            if (name === 'cumulativePnl') return [formatMoney(value), 'Cumulative P/L'];
+                            if (name === 'pnl') return [formatMoney(value), 'Trade P/L'];
+                            return [value, name];
+                          }}
+                          contentStyle={{
+                            background: 'hsl(var(--card))',
+                            border: '1px solid hsl(var(--border))',
+                            borderRadius: '8px',
+                          }}
+                        />
+                        <Line type="monotone" dataKey="index" stroke="hsl(var(--primary))" strokeWidth={2.5} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </>
+                ) : (
+                  <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                    No P/L timeline available for this stock
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -207,9 +292,9 @@ export default function Dashboard() {
                             </span>
                           </td>
                           <td className="py-2 text-right">{t.quantity}</td>
-                          <td className="py-2 text-right">${t.entry_price}</td>
+                          <td className="py-2 text-right">{formatMoney(t.entry_price)}</td>
                           <td className={`py-2 text-right font-medium ${(t.pnl || 0) >= 0 ? 'text-success' : 'text-destructive'}`}>
-                            {t.pnl !== null ? `$${Number(t.pnl).toFixed(2)}` : '—'}
+                            {t.pnl !== null ? formatMoney(t.pnl) : '—'}
                           </td>
                         </tr>
                       ))}

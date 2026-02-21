@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { parseCSV, Trade } from '@/lib/biasDetection';
+import { formatMoney } from '@/lib/format';
 import { Upload, Plus, FileSpreadsheet, Trash2, Loader2 } from 'lucide-react';
 
 export default function UploadTrades() {
@@ -72,9 +73,9 @@ export default function UploadTrades() {
       asset: t.asset,
       quantity: t.quantity,
       entry_price: t.entry_price,
-      exit_price: t.exit_price || null,
-      pnl: t.pnl || null,
-      account_balance: t.account_balance || null,
+      exit_price: t.exit_price ?? null,
+      pnl: t.pnl ?? null,
+      account_balance: t.account_balance ?? null,
       notes: t.notes || null,
     }));
 
@@ -95,9 +96,9 @@ export default function UploadTrades() {
       asset: manualTrade.asset,
       quantity: parseFloat(manualTrade.quantity) || 0,
       entry_price: parseFloat(manualTrade.entry_price) || 0,
-      exit_price: manualTrade.exit_price ? parseFloat(manualTrade.exit_price) : undefined,
-      pnl: manualTrade.pnl ? parseFloat(manualTrade.pnl) : undefined,
-      account_balance: manualTrade.account_balance ? parseFloat(manualTrade.account_balance) : undefined,
+      exit_price: manualTrade.exit_price !== '' ? parseFloat(manualTrade.exit_price) : undefined,
+      pnl: manualTrade.pnl !== '' ? parseFloat(manualTrade.pnl) : undefined,
+      account_balance: manualTrade.account_balance !== '' ? parseFloat(manualTrade.account_balance) : undefined,
       notes: manualTrade.notes || undefined,
     };
 
@@ -192,10 +193,10 @@ export default function UploadTrades() {
                         </td>
                         <td className="py-1.5 font-medium">{t.asset}</td>
                         <td className="py-1.5 text-right">{t.quantity}</td>
-                        <td className="py-1.5 text-right">${t.entry_price}</td>
-                        <td className="py-1.5 text-right">{t.exit_price ? `$${t.exit_price}` : '—'}</td>
+                        <td className="py-1.5 text-right">{formatMoney(t.entry_price)}</td>
+                        <td className="py-1.5 text-right">{t.exit_price !== undefined && t.exit_price !== null ? formatMoney(t.exit_price) : '—'}</td>
                         <td className={`py-1.5 text-right font-medium ${(t.pnl || 0) >= 0 ? 'text-success' : 'text-destructive'}`}>
-                          {t.pnl !== undefined ? `$${t.pnl.toFixed(2)}` : '—'}
+                          {t.pnl !== undefined && t.pnl !== null ? formatMoney(t.pnl) : '—'}
                         </td>
                       </tr>
                     ))}

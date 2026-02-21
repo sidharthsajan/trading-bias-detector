@@ -1,76 +1,193 @@
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { Button } from '@/components/ui/button';
 import {
-  BarChart3, Upload, Brain, MessageSquare, Shield, Activity, User, LogOut, Home
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { cn } from '@/lib/utils';
+import {
+  Activity,
+  BarChart3,
+  Brain,
+  ChevronDown,
+  Home,
+  LogOut,
+  Menu,
+  MessageSquare,
+  Shield,
+  Upload,
+  User,
+  type LucideIcon,
 } from 'lucide-react';
 
-const navItems = [
-  { icon: Home, label: 'Dashboard', path: '/dashboard' },
+type NavItem = {
+  icon: LucideIcon;
+  label: string;
+  path: string;
+};
+
+const tradingItems: NavItem[] = [
   { icon: Upload, label: 'Upload Trades', path: '/upload' },
+  { icon: Shield, label: 'Portfolio', path: '/portfolio' },
+];
+
+const analyticsItems: NavItem[] = [
   { icon: Brain, label: 'Bias Analysis', path: '/analysis' },
   { icon: BarChart3, label: 'Risk Profile', path: '/risk-profile' },
-  { icon: MessageSquare, label: 'AI Coach', path: '/ai-coach' },
   { icon: Activity, label: 'Emotional Tracker', path: '/emotions' },
-  { icon: Shield, label: 'Portfolio', path: '/portfolio' },
+];
+
+const workspaceItems: NavItem[] = [
+  { icon: MessageSquare, label: 'AI Coach', path: '/ai-coach' },
   { icon: User, label: 'Settings', path: '/settings' },
 ];
+
+const allItems: NavItem[] = [
+  { icon: Home, label: 'Dashboard', path: '/dashboard' },
+  ...tradingItems,
+  ...analyticsItems,
+  ...workspaceItems,
+];
+
+interface NavDropdownProps {
+  label: string;
+  items: NavItem[];
+}
 
 export default function AppSidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, signOut } = useAuth();
 
-  return (
-    <aside className="fixed left-0 top-0 h-screen w-64 gradient-navy flex flex-col z-40">
-      <div className="p-6 border-b border-sidebar-border">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg gradient-primary flex items-center justify-center">
-            <Brain className="w-5 h-5 text-primary-foreground" />
-          </div>
-          <div>
-            <h1 className="font-display text-base font-bold text-sidebar-foreground">Bias Detector</h1>
-            <p className="text-xs text-sidebar-foreground/60">National Bank</p>
-          </div>
-        </div>
-      </div>
+  const isActive = (path: string) => location.pathname === path;
 
-      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-        {navItems.map(item => {
-          const active = location.pathname === item.path;
-          return (
-            <button
+  const NavDropdown = ({ label, items }: NavDropdownProps) => {
+    const groupActive = items.some((item) => isActive(item.path));
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            className={cn(
+              'text-secondary-foreground/85 hover:text-secondary-foreground hover:bg-sidebar-accent/70',
+              groupActive && 'bg-sidebar-accent text-secondary-foreground',
+            )}
+          >
+            {label}
+            <ChevronDown className="w-4 h-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          sideOffset={10}
+          className="w-56 border-sidebar-border bg-card"
+        >
+          {items.map((item) => (
+            <DropdownMenuItem
               key={item.path}
               onClick={() => navigate(item.path)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                active
-                  ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                  : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'
-              }`}
+              className={cn(
+                'cursor-pointer',
+                isActive(item.path) && 'bg-accent text-accent-foreground',
+              )}
             >
-              <item.icon className="w-4 h-4" />
+              <item.icon className="w-4 h-4 mr-2" />
               {item.label}
-            </button>
-          );
-        })}
-      </nav>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
 
-      <div className="p-4 border-t border-sidebar-border">
-        <div className="flex items-center gap-3 px-2 mb-3">
-          <div className="w-8 h-8 rounded-full gradient-primary flex items-center justify-center text-primary-foreground text-xs font-bold">
-            {user?.email?.charAt(0).toUpperCase()}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-sidebar-foreground truncate">{user?.email}</p>
-          </div>
-        </div>
+  return (
+    <header className="fixed inset-x-0 top-0 z-40 border-b border-sidebar-border bg-secondary text-secondary-foreground">
+      <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-2 px-4 md:px-8">
         <button
-          onClick={signOut}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+          onClick={() => navigate('/dashboard')}
+          className="flex items-center gap-3 rounded-md px-2 py-1 hover:bg-sidebar-accent/60 transition-colors"
         >
-          <LogOut className="w-4 h-4" />
-          Sign Out
+          <div className="w-9 h-9 rounded-md gradient-primary flex items-center justify-center">
+            <Brain className="w-5 h-5 text-primary-foreground" />
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-semibold leading-tight">Bias Detector</p>
+            <p className="text-[11px] text-secondary-foreground/70 leading-tight">National Bank</p>
+          </div>
         </button>
+
+        <nav className="hidden md:flex items-center gap-1 ml-4">
+          <Button
+            variant="ghost"
+            onClick={() => navigate('/dashboard')}
+            className={cn(
+              'text-secondary-foreground/85 hover:text-secondary-foreground hover:bg-sidebar-accent/70',
+              isActive('/dashboard') && 'bg-sidebar-accent text-secondary-foreground',
+            )}
+          >
+            <Home className="w-4 h-4 mr-1" />
+            Dashboard
+          </Button>
+          <NavDropdown label="Trading" items={tradingItems} />
+          <NavDropdown label="Analytics" items={analyticsItems} />
+          <NavDropdown label="Workspace" items={workspaceItems} />
+        </nav>
+
+        <div className="md:hidden ml-auto">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="text-secondary-foreground hover:bg-sidebar-accent/70">
+                <Menu className="w-5 h-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56 border-sidebar-border bg-card">
+              {allItems.map((item) => (
+                <DropdownMenuItem
+                  key={item.path}
+                  onClick={() => navigate(item.path)}
+                  className={cn('cursor-pointer', isActive(item.path) && 'bg-accent text-accent-foreground')}
+                >
+                  <item.icon className="w-4 h-4 mr-2" />
+                  {item.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <div className="ml-1 md:ml-auto">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="text-secondary-foreground hover:bg-sidebar-accent/70">
+                <div className="w-7 h-7 rounded-full gradient-primary flex items-center justify-center text-primary-foreground text-xs font-semibold">
+                  {user?.email?.charAt(0).toUpperCase()}
+                </div>
+                <span className="hidden md:inline max-w-52 truncate">{user?.email}</span>
+                <ChevronDown className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={10} className="w-64 border-sidebar-border bg-card">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">Signed in as</DropdownMenuLabel>
+              <DropdownMenuLabel className="font-medium truncate">{user?.email}</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => navigate('/settings')} className="cursor-pointer">
+                <User className="w-4 h-4 mr-2" />
+                Settings
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={signOut} className="cursor-pointer text-destructive focus:text-destructive">
+                <LogOut className="w-4 h-4 mr-2" />
+                Sign Out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
-    </aside>
+    </header>
   );
 }
