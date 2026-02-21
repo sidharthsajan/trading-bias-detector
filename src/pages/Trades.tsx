@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { fetchTradesPageForUser, invalidateTradeCache } from '@/lib/trades';
+import { clearTradesForUser, fetchTradesPageForUser, invalidateTradeCache } from '@/lib/trades';
 import { formatMoney } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -105,20 +105,34 @@ export default function Trades() {
   };
 
   const clearAllTrades = async () => {
-    if (!user) return;
+    if (!user || totalCount === 0) return;
     const confirmDelete = window.confirm('Clear all saved trades? This action cannot be undone.');
     if (!confirmDelete) return;
 
     setDeletingAll(true);
     try {
-      const { error } = await supabase.from('trades').delete().eq('user_id', user.id);
-      if (error) throw error;
+      const { deletedCount, remainingCount } = await clearTradesForUser(user.id);
 
       invalidateTradeCache(user.id);
+
+      if (remainingCount > 0) {
+        setPage(1);
+        await loadTrades(1, debouncedQuery, true);
+        toast({
+          title: 'Bulk delete incomplete',
+          description: `${remainingCount} trade(s) still remain. Try again.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
       setTrades([]);
       setTotalCount(0);
       setPage(1);
-      toast({ title: 'All trades cleared' });
+      toast({
+        title: 'All trades cleared',
+        description: deletedCount > 0 ? `${deletedCount} trade(s) removed.` : undefined,
+      });
     } catch (error: any) {
       toast({ title: 'Bulk delete failed', description: error?.message || 'Unknown error', variant: 'destructive' });
     } finally {

@@ -6,6 +6,7 @@ type TradeRow = Database['public']['Tables']['trades']['Row'];
 const TRADE_PAGE_SIZE = 1000;
 const UI_PAGE_SIZE = 100;
 const CACHE_TTL_MS = 30_000;
+const DELETE_BATCH_SIZE = 1000;
 /** Max trades to load for dashboard (keeps navigation fast after large uploads) */
 export const DASHBOARD_TRADE_LIMIT = 10_000;
 
@@ -44,6 +45,49 @@ export async function fetchTradeCountForUser(userId: string): Promise<number> {
 
   if (error) throw error;
   return count ?? 0;
+}
+
+type ClearTradesResult = {
+  deletedCount: number;
+  remainingCount: number;
+};
+
+/**
+ * Clears all trades for a user in bounded batches to avoid oversized delete operations.
+ */
+export async function clearTradesForUser(userId: string): Promise<ClearTradesResult> {
+  let deletedCount = 0;
+
+  while (true) {
+    const { data: idRows, error: idError } = await supabase
+      .from('trades')
+      .select('id')
+      .eq('user_id', userId)
+      .limit(DELETE_BATCH_SIZE);
+
+    if (idError) throw idError;
+
+    const ids = (idRows || []).map((row) => row.id).filter(Boolean);
+    if (ids.length === 0) break;
+
+    const { data: deletedRows, error: deleteError } = await supabase
+      .from('trades')
+      .delete()
+      .eq('user_id', userId)
+      .in('id', ids)
+      .select('id');
+
+    if (deleteError) throw deleteError;
+
+    const deletedThisBatch = deletedRows?.length ?? 0;
+    deletedCount += deletedThisBatch;
+
+    // Safety guard: stop if no progress is made in a batch.
+    if (deletedThisBatch === 0) break;
+  }
+
+  const remainingCount = await fetchTradeCountForUser(userId);
+  return { deletedCount, remainingCount };
 }
 
 export async function fetchAllTradesForUser(userId: string, maxRows?: number): Promise<TradeRow[]> {

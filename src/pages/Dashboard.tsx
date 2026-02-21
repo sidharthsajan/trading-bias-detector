@@ -5,7 +5,13 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { formatMoney } from '@/lib/format';
-import { fetchAllTradesForUser, fetchTradeCountForUser, invalidateTradeCache, DASHBOARD_TRADE_LIMIT } from '@/lib/trades';
+import {
+  clearTradesForUser,
+  fetchAllTradesForUser,
+  fetchTradeCountForUser,
+  invalidateTradeCache,
+  DASHBOARD_TRADE_LIMIT,
+} from '@/lib/trades';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -82,7 +88,9 @@ export default function Dashboard() {
   }, [user, fetchData]);
 
   const clearAllTrades = useCallback(async () => {
-    if (!user || trades.length === 0) return;
+    if (!user) return;
+    const knownCount = totalTradeCount ?? trades.length;
+    if (knownCount === 0) return;
 
     const confirmed = window.confirm('Clear all saved trades? This action cannot be undone.');
     if (!confirmed) return;
@@ -90,21 +98,34 @@ export default function Dashboard() {
     setClearing(true);
 
     try {
-      const { error } = await supabase.from('trades').delete().eq('user_id', user.id);
-      if (error) throw error;
+      const { deletedCount, remainingCount } = await clearTradesForUser(user.id);
 
       invalidateTradeCache(user.id);
+
+      if (remainingCount > 0) {
+        await fetchData(true);
+        toast({
+          title: 'Clear incomplete',
+          description: `${remainingCount} trade(s) still remain. Try again.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
       setTrades([]);
       setTotalTradeCount(0);
       setBiases([]);
       setRiskProfile(null);
-      toast({ title: 'All trades cleared' });
+      toast({
+        title: 'All trades cleared',
+        description: deletedCount > 0 ? `${deletedCount} trade(s) removed.` : undefined,
+      });
     } catch (error: any) {
       toast({ title: 'Clear failed', description: error?.message || 'Unknown error', variant: 'destructive' });
     } finally {
       setClearing(false);
     }
-  }, [user, trades.length, toast]);
+  }, [user, totalTradeCount, trades.length, toast, fetchData]);
 
   const totalPnl = trades.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
   const closedTrades = trades.filter((t) => t.pnl != null && t.pnl !== '');
@@ -373,7 +394,12 @@ export default function Dashboard() {
                 <CardTitle className="font-display">Recent Trades</CardTitle>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => navigate('/trades')}>View All</Button>
-                  <Button variant="destructive" size="sm" onClick={clearAllTrades} disabled={clearing || trades.length === 0}>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={clearAllTrades}
+                    disabled={clearing || (totalTradeCount ?? trades.length) === 0}
+                  >
                     {clearing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Trash2 className="w-4 h-4 mr-1" />}
                     Clear Trades
                   </Button>
