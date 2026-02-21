@@ -21,23 +21,38 @@ export default function AutoTranslate() {
     if (!root) return;
 
     const translateAttributes = (element: Element) => {
-      let originals = attributeSourceRef.current.get(element);
-
       for (const attr of TRANSLATABLE_ATTRIBUTES) {
         const value = element.getAttribute(attr);
         if (value === null) continue;
 
-        if (!originals) {
-          originals = {};
-          attributeSourceRef.current.set(element, originals);
+        const originals = attributeSourceRef.current.get(element);
+        const storedSource = originals?.[attr];
+
+        if (language === 'en') {
+          if (storedSource !== undefined && value !== storedSource) {
+            element.setAttribute(attr, storedSource);
+          }
+          continue;
         }
 
-        if (originals[attr] === undefined) {
-          originals[attr] = value;
+        let source = storedSource;
+        if (source === undefined) {
+          source = value;
+        } else {
+          const translatedStoredSource = translateUiText(source, 'fr');
+          if (value !== translatedStoredSource) {
+            // Underlying UI changed while in FR mode; treat latest value as new source text.
+            source = value;
+          }
         }
 
-        const source = originals[attr] ?? value;
         const translated = translateUiText(source, language);
+        const nextOriginals = originals ?? {};
+        nextOriginals[attr] = source;
+        if (!originals) {
+          attributeSourceRef.current.set(element, nextOriginals);
+        }
+
         if (translated !== value) {
           element.setAttribute(attr, translated);
         }
@@ -47,12 +62,27 @@ export default function AutoTranslate() {
     const translateText = (node: Text) => {
       if (shouldSkipTextNode(node)) return;
       const value = node.nodeValue ?? '';
+      const storedSource = textSourceRef.current.get(node);
 
-      if (!textSourceRef.current.has(node)) {
-        textSourceRef.current.set(node, value);
+      if (language === 'en') {
+        if (storedSource !== undefined && value !== storedSource) {
+          node.nodeValue = storedSource;
+        }
+        return;
       }
 
-      const source = textSourceRef.current.get(node) ?? value;
+      let source = storedSource;
+      if (source === undefined) {
+        source = value;
+      } else {
+        const translatedStoredSource = translateUiText(source, 'fr');
+        if (value !== translatedStoredSource) {
+          // Underlying UI changed while in FR mode; keep tracking the new source.
+          source = value;
+        }
+      }
+
+      textSourceRef.current.set(node, source);
       const translated = translateUiText(source, language);
 
       if (translated !== value) {
