@@ -107,7 +107,7 @@ export default function AICoach() {
 
   return (
     <AppLayout>
-      <div className="h-[calc(100vh-4rem)] flex flex-col animate-fade-in gap-4">
+      <div className="h-[calc(100vh-4rem)] min-h-0 flex flex-col animate-fade-in gap-4">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-3xl font-display font-bold flex items-center gap-2">
@@ -127,8 +127,8 @@ export default function AICoach() {
 
         <CoachInsightsPanel insights={insights} loading={loadingInsights} />
 
-        <Card className="glass-card flex-1 flex flex-col overflow-hidden">
-          <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4">
+        <Card className="glass-card flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y p-6 space-y-4">
             {messages.length === 0 && !loading && (
               <div className="text-center py-16">
                 <MessageSquare className="w-16 h-16 text-muted-foreground/20 mx-auto mb-4" />

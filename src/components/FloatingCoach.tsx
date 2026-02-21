@@ -254,7 +254,7 @@ export default function FloatingCoach() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-[95vw] sm:max-w-[760px] h-[min(84vh,640px)] p-0 overflow-hidden">
-          <div className="h-full flex flex-col">
+          <div className="h-full min-h-0 flex flex-col">
             <DialogHeader className="px-5 py-3 border-b border-border flex-row items-center justify-between space-y-0">
               <DialogTitle className="flex items-center gap-2">
                 <Avatar className="w-7 h-7 border border-border">
@@ -275,7 +275,7 @@ export default function FloatingCoach() {
               </div>
             </DialogHeader>
 
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+            <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y px-5 py-4 space-y-3">
               {showInsights && (
                 <CoachInsightsPanel insights={insights} loading={loadingInsights} compact />
               )}

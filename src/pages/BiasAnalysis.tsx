@@ -11,6 +11,7 @@ import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Responsi
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const FALLBACK_BIAS_SCORE = 50;
 
 export interface AnalyzeResponse {
   biases: Array<{
@@ -166,16 +167,6 @@ export default function BiasAnalysis() {
     ? apiResult.biases
     : results.length > 0
       ? results
-<<<<<<< Updated upstream
-      : savedResults.map(s => ({
-          type: s.analysis_type,
-          severity: s.severity as BiasResult['severity'],
-          title: s.title,
-          description: s.description,
-          details: s.details || {},
-          score: 50,
-        }));
-=======
       : savedResults.map(s => {
           const detailsObj = (s.details || {}) as Record<string, unknown>;
           const raw = detailsObj.score;
@@ -192,7 +183,6 @@ export default function BiasAnalysis() {
             score,
           };
         });
->>>>>>> Stashed changes
 
   const radarData = [
     { bias: 'Overtrading', score: displayResults.find(r => r.type === 'overtrading')?.score ?? 0 },
