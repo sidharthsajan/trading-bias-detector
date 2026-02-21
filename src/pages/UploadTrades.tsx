@@ -65,6 +65,7 @@ export default function UploadTrades() {
   }, [toast]);
 
   const BATCH_SIZE = 1000; // Supabase-friendly chunk size; keeps UI responsive
+  const PARSED_PREVIEW_SIZE = 50;
 
   const saveTrades = async (tradesToSave: Trade[]) => {
     if (!user) return;
@@ -201,7 +202,7 @@ export default function UploadTrades() {
                     </tr>
                   </thead>
                   <tbody>
-                    {parsedTrades.slice(0, 50).map((t, i) => (
+                    {parsedTrades.slice(0, PARSED_PREVIEW_SIZE).map((t, i) => (
                       <tr key={i} className="border-b border-border/30">
                         <td className="py-1.5">{new Date(t.timestamp).toLocaleDateString()}</td>
                         <td className="py-1.5">
@@ -220,8 +221,8 @@ export default function UploadTrades() {
                     ))}
                   </tbody>
                 </table>
-                {parsedTrades.length > 50 && (
-                  <p className="text-sm text-muted-foreground text-center mt-2">Showing first 50 of {parsedTrades.length} trades</p>
+                {parsedTrades.length > PARSED_PREVIEW_SIZE && (
+                  <p className="text-sm text-muted-foreground text-center mt-2">Showing first {PARSED_PREVIEW_SIZE} of {parsedTrades.length} trades</p>
                 )}
               </div>
             </CardContent>

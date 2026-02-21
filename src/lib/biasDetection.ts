@@ -1,4 +1,8 @@
 // Bias Detection Engine
+
+/** Fallback balance when computing "big move" threshold (3%) when account_balance is missing. */
+const DEFAULT_ACCOUNT_BALANCE_FOR_PCT = 10_000;
+
 export interface Trade {
   id?: string;
   timestamp: string;
@@ -40,7 +44,7 @@ export function detectOvertrading(trades: Trade[]): BiasResult | null {
   let tradesAfterBigMove = 0;
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1];
-    if (prev.pnl && Math.abs(prev.pnl) > (prev.account_balance || 10000) * 0.03) {
+    if (prev.pnl && Math.abs(prev.pnl) > (prev.account_balance ?? DEFAULT_ACCOUNT_BALANCE_FOR_PCT) * 0.03) {
       const timeDiff = new Date(sorted[i].timestamp).getTime() - new Date(prev.timestamp).getTime();
       if (timeDiff < 3600000) tradesAfterBigMove++;
     }

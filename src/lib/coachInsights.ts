@@ -303,9 +303,10 @@ export function buildCoachInsights(trades: InsightTrade[], biases: InsightBias[]
 
   const totalTrades = validTrades.length;
   const totalPnl = validTrades.reduce((sum, trade) => sum + toFiniteNumber(trade.pnl), 0);
-  const wins = validTrades.filter((trade) => toFiniteNumber(trade.pnl) > 0);
-  const losses = validTrades.filter((trade) => toFiniteNumber(trade.pnl) < 0);
-  const winRate = totalTrades > 0 ? Math.round((wins.length / totalTrades) * 100) : 0;
+  const closedTrades = validTrades.filter((trade) => trade.pnl != null && trade.pnl !== '');
+  const wins = closedTrades.filter((trade) => toFiniteNumber(trade.pnl) > 0);
+  const losses = closedTrades.filter((trade) => toFiniteNumber(trade.pnl) < 0);
+  const winRate = closedTrades.length > 0 ? Math.round((wins.length / closedTrades.length) * 100) : 0;
 
   const avgWin = wins.length > 0 ? wins.reduce((sum, trade) => sum + toFiniteNumber(trade.pnl), 0) / wins.length : 0;
   const avgLoss = losses.length > 0

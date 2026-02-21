@@ -5,7 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { formatMoney } from '@/lib/format';
-import { fetchAllTradesForUser, invalidateTradeCache } from '@/lib/trades';
+import { fetchAllTradesForUser, fetchTradeCountForUser, invalidateTradeCache, DASHBOARD_TRADE_LIMIT } from '@/lib/trades';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -26,6 +26,7 @@ export default function Dashboard() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const [trades, setTrades] = useState<any[]>([]);
+  const [totalTradeCount, setTotalTradeCount] = useState<number | null>(null);
   const [biases, setBiases] = useState<any[]>([]);
   const [riskProfile, setRiskProfile] = useState<any>(null);
   const [selectedAsset, setSelectedAsset] = useState('');
@@ -39,8 +40,9 @@ export default function Dashboard() {
     else setLoading(true);
 
     try {
-      const [tradesRes, biasesRes, riskRes] = await Promise.allSettled([
-        fetchAllTradesForUser(user.id),
+      const [tradesRes, countRes, biasesRes, riskRes] = await Promise.allSettled([
+        fetchAllTradesForUser(user.id, DASHBOARD_TRADE_LIMIT),
+        fetchTradeCountForUser(user.id),
         supabase.from('bias_analyses').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
         supabase.from('risk_profiles').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(1),
       ]);
@@ -53,6 +55,12 @@ export default function Dashboard() {
           description: 'Your latest trade data could not be loaded. Try refreshing.',
           variant: 'destructive',
         });
+      }
+
+      if (countRes.status === 'fulfilled') {
+        setTotalTradeCount(countRes.value);
+      } else {
+        setTotalTradeCount(null);
       }
 
       if (biasesRes.status === 'fulfilled' && !biasesRes.value.error) {
@@ -87,6 +95,7 @@ export default function Dashboard() {
 
       invalidateTradeCache(user.id);
       setTrades([]);
+      setTotalTradeCount(0);
       setBiases([]);
       setRiskProfile(null);
       toast({ title: 'All trades cleared' });
@@ -98,8 +107,9 @@ export default function Dashboard() {
   }, [user, trades.length, toast]);
 
   const totalPnl = trades.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
-  const winningTrades = trades.filter((t) => (Number(t.pnl) || 0) > 0).length;
-  const winRate = trades.length > 0 ? Math.round((winningTrades / trades.length) * 100) : 0;
+  const closedTrades = trades.filter((t) => t.pnl != null && t.pnl !== '');
+  const winningTrades = closedTrades.filter((t) => Number(t.pnl) > 0).length;
+  const winRate = closedTrades.length > 0 ? Math.round((winningTrades / closedTrades.length) * 100) : 0;
 
   const criticalBiases = biases.filter((b) => b.severity === 'critical' || b.severity === 'high');
 
@@ -197,7 +207,7 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Total Trades</p>
-                  <p className="text-3xl font-display font-bold">{trades.length}</p>
+                  <p className="text-3xl font-display font-bold">{(totalTradeCount ?? trades.length).toLocaleString()}</p>
                 </div>
                 <BarChart3 className="w-10 h-10 text-primary/30" />
               </div>
@@ -239,6 +249,9 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
+        {totalTradeCount != null && totalTradeCount > trades.length && (
+          <p className="text-xs text-muted-foreground">P/L and win rate based on most recent {DASHBOARD_TRADE_LIMIT.toLocaleString()} trades.</p>
+        )}
 
         {trades.length === 0 ? (
           <Card className="glass-card">

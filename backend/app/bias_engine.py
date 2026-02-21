@@ -45,6 +45,9 @@ CSV_HEADER_MAP = {
     "account_balance": COL_BALANCE,
 }
 
+# Cap rows returned in /analyze response to avoid huge JSON and frontend DOM crash
+TRADES_RESPONSE_CAP = 10_000
+
 
 def parse_csv_to_dataframe(csv_bytes: bytes) -> pl.DataFrame:
     """Parse CSV bytes into a normalized Polars DataFrame. Expects headers: Timestamp, Buy/Sell, Asset, Quantity, Price, P/L, Balance."""
@@ -345,8 +348,6 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
             "preprocess": preprocess_stats,
         }
 
-    # Cap rows returned to avoid huge JSON and frontend DOM crash (e.g. 200k rows)
-    TRADES_RESPONSE_CAP = 10_000
     total_trades = df.height
 
     select_exprs = [

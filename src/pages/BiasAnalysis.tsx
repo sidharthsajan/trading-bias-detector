@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const ANALYZE_TIMEOUT_MS = 5 * 60 * 1000; // 5 min for large CSVs
 const JOURNAL_PAGE_SIZE = 100;
+const FALLBACK_BIAS_SCORE = 0;
 
 export interface AnalyzeResponse {
   biases: Array<{
@@ -155,7 +156,7 @@ export default function BiasAnalysis() {
           severity: b.severity,
           title: b.title,
           description: b.description,
-          details: b.details,
+          details: { ...b.details, score: b.score },
         }))
       );
     }
@@ -178,14 +179,18 @@ export default function BiasAnalysis() {
     ? apiResult.biases
     : results.length > 0
       ? results
-      : savedResults.map(s => ({
-          type: s.analysis_type,
-          severity: s.severity as BiasResult['severity'],
-          title: s.title,
-          description: s.description,
-          details: s.details || {},
-          score: 50,
-        }));
+      : savedResults.map(s => {
+          const detailsObj = (s.details || {}) as Record<string, unknown>;
+          const score = typeof detailsObj.score === 'number' ? detailsObj.score : FALLBACK_BIAS_SCORE;
+          return {
+            type: s.analysis_type,
+            severity: s.severity as BiasResult['severity'],
+            title: s.title,
+            description: s.description,
+            details: s.details || {},
+            score,
+          };
+        });
 
   const radarData = [
     { bias: 'Overtrading', score: displayResults.find(r => r.type === 'overtrading')?.score ?? 0 },
