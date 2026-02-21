@@ -15,7 +15,7 @@ npm start
 
 ## Python setup
 
-Vite + React frontend with Supabase (auth + database). See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for Vercel and AWS deployment.
+Vite + React frontend with Supabase (auth + database). See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for Vercel (and Supabase) deployment.
 
 ## Local dev (frontend)
 

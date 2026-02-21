@@ -1,28 +1,54 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { runFullAnalysis, calculateRiskProfile, BiasResult, Trade } from '@/lib/biasDetection';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Brain, AlertTriangle, CheckCircle, Loader2, RefreshCw, TrendingUp, Shield, Zap } from 'lucide-react';
+import { Brain, AlertTriangle, CheckCircle, Loader2, RefreshCw, TrendingUp, Zap, Upload, FileSpreadsheet } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts';
+import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip, RadialBarChart, RadialBar } from 'recharts';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
-const severityConfig = {
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+export interface AnalyzeResponse {
+  biases: Array<{
+    type: string;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+    title: string;
+    description: string;
+    details: Record<string, unknown>;
+    score: number;
+  }>;
+  trade_flags: {
+    overtrading: number[];
+    loss_aversion: number[];
+    revenge_trading: number[];
+  };
+  bias_score: number;
+  trades: Array<{
+    timestamp: string;
+    buy_sell: string;
+    asset: string;
+    quantity: number;
+    price: number;
+    p_l: number | null;
+    balance: number | null;
+  }>;
+}
+
+const severityConfig: Record<string, { color: string; icon: string }> = {
   critical: { color: 'bg-destructive/10 text-destructive border-destructive/20', icon: '🔴' },
-  high: { color: 'bg-warning/10 text-warning-foreground border-warning/20', icon: '🟠' },
+  high: { color: 'bg-destructive/10 text-destructive border-destructive/20', icon: '🟠' },
   medium: { color: 'bg-primary/10 text-primary border-primary/20', icon: '🟡' },
-  low: { color: 'bg-success/10 text-success border-success/20', icon: '🟢' },
+  low: { color: 'bg-muted text-muted-foreground border-border', icon: '🟢' },
 };
 
 const biasIcons: Record<string, typeof Brain> = {
   overtrading: Zap,
   loss_aversion: TrendingUp,
   revenge_trading: AlertTriangle,
-  disposition_effect: TrendingUp,
-  anchoring: Shield,
-  confirmation_bias: Brain,
 };
 
 export default function BiasAnalysis() {
@@ -30,9 +56,12 @@ export default function BiasAnalysis() {
   const { toast } = useToast();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [results, setResults] = useState<BiasResult[]>([]);
-  const [savedResults, setSavedResults] = useState<any[]>([]);
+  const [savedResults, setSavedResults] = useState<Array<{ analysis_type: string; severity: string; title: string; description: string; details: Record<string, unknown> }>>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [apiResult, setApiResult] = useState<AnalyzeResponse | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
     if (user) fetchData();
@@ -43,38 +72,72 @@ export default function BiasAnalysis() {
       supabase.from('trades').select('*').eq('user_id', user!.id).order('timestamp', { ascending: true }),
       supabase.from('bias_analyses').select('*').eq('user_id', user!.id).order('created_at', { ascending: false }),
     ]);
-    setTrades((tradesRes.data || []).map((t: any) => ({
-      timestamp: t.timestamp,
-      action: t.action,
-      asset: t.asset,
+    setTrades((tradesRes.data || []).map((t: Record<string, unknown>) => ({
+      timestamp: t.timestamp as string,
+      action: t.action as 'buy' | 'sell',
+      asset: t.asset as string,
       quantity: Number(t.quantity),
       entry_price: Number(t.entry_price),
       exit_price: t.exit_price ? Number(t.exit_price) : undefined,
-      pnl: t.pnl ? Number(t.pnl) : undefined,
-      account_balance: t.account_balance ? Number(t.account_balance) : undefined,
-      notes: t.notes,
+      pnl: t.pnl != null ? Number(t.pnl) : undefined,
+      account_balance: t.account_balance != null ? Number(t.account_balance) : undefined,
+      notes: t.notes as string | undefined,
     })));
-    setSavedResults(biasRes.data || []);
+    setSavedResults((biasRes.data || []).map((s: Record<string, unknown>) => ({
+      analysis_type: s.analysis_type as string,
+      severity: s.severity as string,
+      title: s.title as string,
+      description: s.description as string,
+      details: (s.details as Record<string, unknown>) || {},
+    })));
     setLoading(false);
   };
+
+  const analyzeFile = useCallback(async (file: File) => {
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      toast({ title: 'Invalid file', description: 'Please upload a CSV file.', variant: 'destructive' });
+      return;
+    }
+    setUploading(true);
+    setApiResult(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch(`${API_BASE}/analyze`, { method: 'POST', body: form });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || res.statusText || 'Analysis failed');
+      }
+      const data: AnalyzeResponse = await res.json();
+      setApiResult(data);
+      toast({ title: 'Analysis complete', description: `Bias score: ${data.bias_score}. ${data.biases.length} pattern(s) detected.` });
+    } catch (e) {
+      toast({ title: 'Analysis failed', description: e instanceof Error ? e.message : 'Could not reach analysis API.', variant: 'destructive' });
+    } finally {
+      setUploading(false);
+    }
+  }, [toast]);
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) analyzeFile(file);
+  }, [analyzeFile]);
+
+  const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(true); }, []);
+  const onDragLeave = useCallback(() => setDragOver(false), []);
 
   const runAnalysis = async () => {
     if (trades.length < 5) {
       toast({ title: 'Not enough data', description: 'Upload at least 5 trades to run analysis.', variant: 'destructive' });
       return;
     }
-
     setAnalyzing(true);
-
     const biases = runFullAnalysis(trades);
     setResults(biases);
-
-    // Save to DB
     const riskProfile = calculateRiskProfile(trades, biases);
-
-    // Delete old analyses
     await supabase.from('bias_analyses').delete().eq('user_id', user!.id);
-
     if (biases.length > 0) {
       await supabase.from('bias_analyses').insert(
         biases.map(b => ({
@@ -87,8 +150,6 @@ export default function BiasAnalysis() {
         }))
       );
     }
-
-    // Save risk profile
     await supabase.from('risk_profiles').insert({
       user_id: user!.id,
       overall_score: riskProfile.overallScore,
@@ -99,54 +160,196 @@ export default function BiasAnalysis() {
       emotional_control_score: riskProfile.emotionalControlScore,
       details: riskProfile,
     });
-
-    toast({ title: `Analysis complete`, description: `Found ${biases.length} bias pattern(s).` });
+    toast({ title: 'Analysis complete', description: `Found ${biases.length} bias pattern(s).` });
     setAnalyzing(false);
     fetchData();
   };
 
-  const displayResults = results.length > 0 ? results : savedResults.map(s => ({
-    type: s.analysis_type,
-    severity: s.severity as BiasResult['severity'],
-    title: s.title,
-    description: s.description,
-    details: s.details || {},
-    score: 50,
-  }));
+  const displayResults = apiResult
+    ? apiResult.biases
+    : results.length > 0
+      ? results
+      : savedResults.map(s => ({
+          type: s.analysis_type,
+          severity: s.severity as BiasResult['severity'],
+          title: s.title,
+          description: s.description,
+          details: s.details || {},
+          score: 50,
+        }));
 
   const radarData = [
-    { bias: 'Overtrading', score: displayResults.find(r => r.type === 'overtrading')?.score || 0 },
-    { bias: 'Loss Aversion', score: displayResults.find(r => r.type === 'loss_aversion')?.score || 0 },
-    { bias: 'Revenge', score: displayResults.find(r => r.type === 'revenge_trading')?.score || 0 },
-    { bias: 'Disposition', score: displayResults.find(r => r.type === 'disposition_effect')?.score || 0 },
-    { bias: 'Anchoring', score: displayResults.find(r => r.type === 'anchoring')?.score || 0 },
-    { bias: 'Confirmation', score: displayResults.find(r => r.type === 'confirmation_bias')?.score || 0 },
+    { bias: 'Overtrading', score: displayResults.find(r => r.type === 'overtrading')?.score ?? 0 },
+    { bias: 'Loss Aversion', score: displayResults.find(r => r.type === 'loss_aversion')?.score ?? 0 },
+    { bias: 'Revenge', score: displayResults.find(r => r.type === 'revenge_trading')?.score ?? 0 },
   ];
+
+  const biasScore = apiResult?.bias_score ?? (displayResults.length ? Math.round(displayResults.reduce((s, b) => s + (b.score ?? 0), 0) / displayResults.length) : 0);
+  const tradeFlags = apiResult?.trade_flags ?? { overtrading: [], loss_aversion: [], revenge_trading: [] };
+  const allBiasedIndices = new Set([...tradeFlags.overtrading, ...tradeFlags.loss_aversion, ...tradeFlags.revenge_trading]);
+  const journalTrades = apiResult?.trades ?? trades.map(t => ({
+    timestamp: t.timestamp,
+    buy_sell: t.action,
+    asset: t.asset,
+    quantity: t.quantity,
+    price: t.entry_price,
+    p_l: t.pnl ?? null,
+    balance: t.account_balance ?? null,
+  }));
+
+  const heatmapData = (() => {
+    const hours = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
+    journalTrades.forEach(t => {
+      try {
+        const d = new Date(t.timestamp);
+        if (!Number.isNaN(d.getTime())) hours[d.getHours()].count++;
+      } catch {
+        // skip
+      }
+    });
+    return hours;
+  })();
+  const maxCount = Math.max(1, ...heatmapData.map(h => h.count));
 
   return (
     <AppLayout>
       <div className="space-y-8 animate-fade-in">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-display font-bold">Bias Analysis</h1>
-            <p className="text-muted-foreground mt-1">{trades.length} trades loaded for analysis</p>
-          </div>
-          <Button onClick={runAnalysis} disabled={analyzing || trades.length < 5} className="gradient-primary text-primary-foreground">
-            {analyzing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-            {analyzing ? 'Analyzing...' : 'Run Analysis'}
-          </Button>
+        <div>
+          <h1 className="text-3xl font-display font-bold">Bias Analysis</h1>
+          <p className="text-muted-foreground mt-1">Upload a CSV or use saved trades to detect behavioral biases</p>
         </div>
 
+        {/* File upload zone */}
+        <Card className={`glass-card border-2 border-dashed transition-colors ${dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/25'}`}>
+          <CardContent className="pt-6">
+            <div
+              onDrop={onDrop}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              className="flex flex-col items-center justify-center rounded-lg border border-dashed border-muted-foreground/25 bg-muted/20 py-12 px-6"
+            >
+              <Upload className="w-10 h-10 text-muted-foreground mb-3" />
+              <p className="text-sm font-medium text-foreground mb-1">Drop your CSV here or click to browse</p>
+              <p className="text-xs text-muted-foreground mb-4">Headers: Timestamp, Buy/Sell, Asset, Quantity, Price, P/L, Balance</p>
+              <input
+                type="file"
+                accept=".csv"
+                className="hidden"
+                id="csv-upload"
+                onChange={e => { const f = e.target.files?.[0]; if (f) analyzeFile(f); e.target.value = ''; }}
+              />
+              <Button variant="secondary" disabled={uploading} onClick={() => document.getElementById('csv-upload')?.click()}>
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FileSpreadsheet className="w-4 h-4 mr-2" />}
+                {uploading ? 'Analyzing…' : 'Choose CSV'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Bias Score radial gauge */}
+        {(apiResult || displayResults.length > 0) && (
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle className="font-display">Bias Score</CardTitle>
+              <CardDescription>Overall behavioral bias intensity (0 = none, 100 = severe)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="relative w-full" style={{ height: 220 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <RadialBarChart
+                    innerRadius="60%"
+                    outerRadius="100%"
+                    data={[{ name: 'Score', value: biasScore, fill: 'hsl(var(--primary))' }]}
+                    startAngle={180}
+                    endAngle={0}
+                  >
+                    <RadialBar dataKey="value" max={100} cornerRadius={8} />
+                  </RadialBarChart>
+                </ResponsiveContainer>
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <span className="text-4xl font-bold text-foreground">{biasScore}</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Heatmap: trading intensity by time of day */}
+        {journalTrades.length > 0 && (
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle className="font-display">Trading intensity by hour</CardTitle>
+              <CardDescription>Number of trades per hour of day (UTC or local)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-1">
+                {heatmapData.map(({ hour, count }) => (
+                  <div
+                    key={hour}
+                    className="h-8 w-8 rounded flex items-center justify-center text-[10px] font-medium text-foreground/80"
+                    style={{ backgroundColor: `hsl(var(--primary) / ${0.15 + (count / maxCount) * 0.85})` }}
+                    title={`${hour}:00 – ${count} trade(s)`}
+                  >
+                    {count > 0 ? count : ''}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">0h → 23h</p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Trade Journal table */}
+        {journalTrades.length > 0 && (
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle className="font-display">Trade Journal</CardTitle>
+              <CardDescription>Biased trades are highlighted in red</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Timestamp</TableHead>
+                    <TableHead>Buy/Sell</TableHead>
+                    <TableHead>Asset</TableHead>
+                    <TableHead>Quantity</TableHead>
+                    <TableHead>Price</TableHead>
+                    <TableHead>P/L</TableHead>
+                    <TableHead>Balance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {journalTrades.map((row, idx) => (
+                    <TableRow
+                      key={idx}
+                      className={allBiasedIndices.has(idx) ? 'bg-destructive/10 border-l-4 border-l-destructive' : ''}
+                    >
+                      <TableCell>{row.timestamp}</TableCell>
+                      <TableCell>{row.buy_sell}</TableCell>
+                      <TableCell>{row.asset}</TableCell>
+                      <TableCell>{row.quantity}</TableCell>
+                      <TableCell>{row.price}</TableCell>
+                      <TableCell className={row.p_l != null && row.p_l < 0 ? 'text-destructive' : ''}>{row.p_l != null ? row.p_l : '—'}</TableCell>
+                      <TableCell>{row.balance != null ? row.balance : '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Radar + bias cards (when we have results) */}
         {displayResults.length > 0 && (
           <>
-            {/* Radar chart */}
             <Card className="glass-card">
               <CardHeader>
                 <CardTitle className="font-display">Bias Radar</CardTitle>
-                <CardDescription>Overview of detected behavioral biases (0 = none, 100 = severe)</CardDescription>
+                <CardDescription>Overtrading, loss aversion, revenge (0–100)</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={350}>
+                <ResponsiveContainer width="100%" height={280}>
                   <RadarChart data={radarData}>
                     <PolarGrid stroke="hsl(var(--border))" />
                     <PolarAngleAxis dataKey="bias" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }} />
@@ -157,12 +360,10 @@ export default function BiasAnalysis() {
                 </ResponsiveContainer>
               </CardContent>
             </Card>
-
-            {/* Individual biases */}
             <div className="grid gap-4">
               {displayResults.map((bias, i) => {
-                const config = severityConfig[bias.severity];
-                const Icon = biasIcons[bias.type] || Brain;
+                const config = severityConfig[bias.severity] ?? severityConfig.low;
+                const Icon = biasIcons[bias.type] ?? Brain;
                 return (
                   <Card key={i} className={`glass-card border ${config.color}`}>
                     <CardContent className="pt-6">
@@ -179,13 +380,13 @@ export default function BiasAnalysis() {
                           <p className="text-muted-foreground">{bias.description}</p>
                           {bias.details && Object.keys(bias.details).length > 0 && (
                             <div className="mt-3 flex flex-wrap gap-2">
-                              {Object.entries(bias.details).map(([k, v]) => (
-                                typeof v !== 'object' && (
+                              {Object.entries(bias.details).map(([k, v]) =>
+                                typeof v !== 'object' && v != null ? (
                                   <span key={k} className="px-2 py-1 rounded-md bg-muted text-xs font-mono">
                                     {k.replace(/_/g, ' ')}: {String(v)}
                                   </span>
-                                )
-                              ))}
+                                ) : null
+                              )}
                             </div>
                           )}
                         </div>
@@ -198,14 +399,25 @@ export default function BiasAnalysis() {
           </>
         )}
 
-        {displayResults.length === 0 && !loading && (
+        {/* Saved trades: Run analysis (client-side) */}
+        {!apiResult && trades.length > 0 && (
+          <Card className="glass-card">
+            <CardContent className="pt-6 flex items-center justify-between">
+              <p className="text-muted-foreground">{trades.length} trades loaded from your account. Run analysis to detect biases (client-side).</p>
+              <Button onClick={runAnalysis} disabled={analyzing || trades.length < 5} className="gradient-primary text-primary-foreground">
+                {analyzing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                {analyzing ? 'Analyzing…' : 'Run Analysis'}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {displayResults.length === 0 && journalTrades.length === 0 && !loading && (
           <Card className="glass-card">
             <CardContent className="py-16 text-center">
-              <CheckCircle className="w-16 h-16 text-success/30 mx-auto mb-4" />
-              <h3 className="text-xl font-display font-semibold mb-2">No biases detected</h3>
-              <p className="text-muted-foreground">
-                {trades.length < 5 ? 'Upload at least 5 trades to run analysis.' : 'Your trading appears disciplined. Keep it up!'}
-              </p>
+              <CheckCircle className="w-16 h-16 text-muted-foreground/30 mx-auto mb-4" />
+              <h3 className="text-xl font-display font-semibold mb-2">No data yet</h3>
+              <p className="text-muted-foreground">Upload a CSV above or save trades from the Upload page, then run analysis.</p>
             </CardContent>
           </Card>
         )}
