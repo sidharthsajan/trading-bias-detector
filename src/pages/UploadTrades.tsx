@@ -64,14 +64,14 @@ export default function UploadTrades() {
     toast({ title: `Parsed ${trades.length} trades` });
   }, [toast]);
 
-  const BATCH_SIZE = 1000; // Supabase-friendly chunk size; keeps UI responsive
+  const BATCH_SIZE = 250; // Smaller chunks provide smoother visible save progress
   const PARSED_PREVIEW_SIZE = 50;
 
   const saveTrades = async (tradesToSave: Trade[]) => {
     if (!user) return;
     setUploading(true);
     const total = tradesToSave.length;
-    setSaveProgress(total > BATCH_SIZE ? { done: 0, total } : null);
+    setSaveProgress({ done: 0, total });
 
     try {
       for (let offset = 0; offset < total; offset += BATCH_SIZE) {
@@ -93,7 +93,7 @@ export default function UploadTrades() {
           toast({ title: 'Save failed', description: error.message, variant: 'destructive' });
           return;
         }
-        setSaveProgress(p => (p ? { done: offset + batch.length, total: p.total } : null));
+        setSaveProgress({ done: Math.min(offset + batch.length, total), total });
         // Yield to UI so it can update progress
         if (offset + BATCH_SIZE < total) {
           await new Promise(r => setTimeout(r, 0));
@@ -107,6 +107,10 @@ export default function UploadTrades() {
       setSaveProgress(null);
     }
   };
+
+  const saveProgressPercent = saveProgress
+    ? Math.round((saveProgress.done / Math.max(saveProgress.total, 1)) * 100)
+    : 0;
 
   const addManualTrade = async () => {
     const trade: Trade = {
@@ -178,16 +182,32 @@ export default function UploadTrades() {
                 <CardDescription>Review before saving</CardDescription>
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setParsedTrades([])}>
+                <Button variant="outline" onClick={() => setParsedTrades([])} disabled={uploading}>
                   <Trash2 className="w-4 h-4 mr-1" /> Clear
                 </Button>
                 <Button onClick={() => saveTrades(parsedTrades)} disabled={uploading} className="gradient-primary text-primary-foreground">
                   {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                  {saveProgress ? `Saving ${saveProgress.done.toLocaleString()} / ${saveProgress.total.toLocaleString()}` : 'Save All'}
+                  {uploading && saveProgress
+                    ? `Saving ${saveProgress.done.toLocaleString()} / ${saveProgress.total.toLocaleString()}`
+                    : 'Save All'}
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
+              {uploading && saveProgress && (
+                <div className="mb-4 rounded-lg border border-border/70 bg-muted/40 p-3">
+                  <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+                    <span>Saved {saveProgress.done.toLocaleString()} of {saveProgress.total.toLocaleString()} trades</span>
+                    <span>{saveProgressPercent}%</span>
+                  </div>
+                  <div className="mt-2 h-2 w-full rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full gradient-primary transition-all duration-200"
+                      style={{ width: `${saveProgressPercent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="max-h-96 overflow-y-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-card">
