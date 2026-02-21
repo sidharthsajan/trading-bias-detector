@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -11,6 +12,19 @@ import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Responsi
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+const pageVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.06, delayChildren: 0.05 },
+  },
+};
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 16 },
+  visible: { opacity: 1, y: 0 },
+};
 
 export interface AnalyzeResponse {
   biases: Array<{
@@ -210,14 +224,20 @@ export default function BiasAnalysis() {
 
   return (
     <AppLayout>
-      <div className="space-y-8 animate-fade-in">
-        <div>
+      <motion.div
+        className="space-y-8"
+        variants={pageVariants}
+        initial="hidden"
+        animate="visible"
+      >
+        <motion.div variants={cardVariants}>
           <h1 className="text-3xl font-display font-bold">Bias Analysis</h1>
           <p className="text-muted-foreground mt-1">Upload a CSV or use saved trades to detect behavioral biases</p>
-        </div>
+        </motion.div>
 
         {/* Preprocessing summary */}
         {apiResult?.preprocess && (apiResult.preprocess.rows_before !== apiResult.preprocess.rows_after || apiResult.preprocess.dropped_invalid > 0 || apiResult.preprocess.dropped_outliers > 0 || apiResult.preprocess.dropped_duplicates > 0) && (
+          <motion.div variants={cardVariants}>
           <Card className="glass-card border-muted">
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">
@@ -228,10 +248,12 @@ export default function BiasAnalysis() {
               </p>
             </CardContent>
           </Card>
+          </motion.div>
         )}
 
         {/* Bias Score radial gauge */}
         {(apiResult || displayResults.length > 0) && (
+          <motion.div variants={cardVariants}>
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="font-display">Bias Score</CardTitle>
@@ -256,10 +278,12 @@ export default function BiasAnalysis() {
               </div>
             </CardContent>
           </Card>
+          </motion.div>
         )}
 
         {/* Heatmap: trading intensity by time of day */}
         {journalTrades.length > 0 && (
+          <motion.div variants={cardVariants}>
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="font-display">Trading intensity by hour</CardTitle>
@@ -281,10 +305,12 @@ export default function BiasAnalysis() {
               <p className="text-xs text-muted-foreground mt-2">0h → 23h</p>
             </CardContent>
           </Card>
+          </motion.div>
         )}
 
         {/* Trade Journal table */}
         {journalTrades.length > 0 && (
+          <motion.div variants={cardVariants}>
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="font-display">Trade Journal</CardTitle>
@@ -322,11 +348,13 @@ export default function BiasAnalysis() {
               </Table>
             </CardContent>
           </Card>
+          </motion.div>
         )}
 
         {/* Radar + bias cards (when we have results) */}
         {displayResults.length > 0 && (
           <>
+            <motion.div variants={cardVariants}>
             <Card className="glass-card">
               <CardHeader>
                 <CardTitle className="font-display">Bias Radar</CardTitle>
@@ -344,12 +372,14 @@ export default function BiasAnalysis() {
                 </ResponsiveContainer>
               </CardContent>
             </Card>
-            <div className="grid gap-4">
+            </motion.div>
+            <motion.div className="grid gap-4" variants={pageVariants}>
               {displayResults.map((bias, i) => {
                 const config = severityConfig[bias.severity] ?? severityConfig.low;
                 const Icon = biasIcons[bias.type] ?? Brain;
                 return (
-                  <Card key={i} className={`glass-card border ${config.color}`}>
+                  <motion.div key={i} variants={cardVariants}>
+                  <Card className={`glass-card border ${config.color}`}>
                     <CardContent className="pt-6">
                       <div className="flex items-start gap-4">
                         <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${config.color}`}>
@@ -377,14 +407,16 @@ export default function BiasAnalysis() {
                       </div>
                     </CardContent>
                   </Card>
+                  </motion.div>
                 );
               })}
-            </div>
+            </motion.div>
           </>
         )}
 
         {/* Saved trades: Run analysis (client-side) */}
         {!apiResult && trades.length > 0 && (
+          <motion.div variants={cardVariants}>
           <Card className="glass-card">
             <CardContent className="pt-6 flex items-center justify-between">
               <p className="text-muted-foreground">{trades.length} trades loaded from your account. Run analysis to detect biases (client-side).</p>
@@ -394,9 +426,11 @@ export default function BiasAnalysis() {
               </Button>
             </CardContent>
           </Card>
+          </motion.div>
         )}
 
         {displayResults.length === 0 && journalTrades.length === 0 && !loading && (
+          <motion.div variants={cardVariants}>
           <Card className="glass-card">
             <CardContent className="py-16 text-center">
               <CheckCircle className="w-16 h-16 text-muted-foreground/30 mx-auto mb-4" />
@@ -404,8 +438,9 @@ export default function BiasAnalysis() {
               <p className="text-muted-foreground">Upload a CSV above or save trades from the Upload page, then run analysis.</p>
             </CardContent>
           </Card>
+          </motion.div>
         )}
-      </div>
+      </motion.div>
     </AppLayout>
   );
 }
