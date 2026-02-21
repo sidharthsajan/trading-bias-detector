@@ -16,6 +16,7 @@ import {
   Brain,
   ChevronDown,
   Home,
+  Languages,
   LogOut,
   Menu,
   MessageSquare,
@@ -25,6 +26,7 @@ import {
   User,
   type LucideIcon,
 } from 'lucide-react';
+import { useLanguage } from '@/hooks/useLanguage';
 
 type NavItem = {
   icon: LucideIcon;
@@ -65,6 +67,7 @@ export default function AppSidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, signOut } = useAuth();
+  const { language, toggleLanguage } = useLanguage();
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -141,29 +144,40 @@ export default function AppSidebar() {
           <NavDropdown label="Workspace" items={workspaceItems} />
         </nav>
 
-        <div className="md:hidden ml-auto">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="text-secondary-foreground hover:bg-sidebar-accent/70">
-                <Menu className="w-5 h-5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 border-sidebar-border bg-card">
-              {allItems.map((item) => (
-                <DropdownMenuItem
-                  key={item.path}
-                  onClick={() => navigate(item.path)}
-                  className={cn('cursor-pointer', isActive(item.path) && 'bg-accent text-accent-foreground')}
-                >
-                  <item.icon className="w-4 h-4 mr-2" />
-                  {item.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleLanguage}
+            className="text-secondary-foreground hover:bg-sidebar-accent/70"
+            title={language === 'en' ? 'Set language to French' : 'Set language to English'}
+          >
+            <Languages className="w-4 h-4 mr-1" />
+            {language === 'en' ? 'FR' : 'EN'}
+          </Button>
 
-        <div className="ml-1 md:ml-auto">
+          <div className="md:hidden">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="text-secondary-foreground hover:bg-sidebar-accent/70">
+                  <Menu className="w-5 h-5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 border-sidebar-border bg-card">
+                {allItems.map((item) => (
+                  <DropdownMenuItem
+                    key={item.path}
+                    onClick={() => navigate(item.path)}
+                    className={cn('cursor-pointer', isActive(item.path) && 'bg-accent text-accent-foreground')}
+                  >
+                    <item.icon className="w-4 h-4 mr-2" />
+                    {item.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="text-secondary-foreground hover:bg-sidebar-accent/70">

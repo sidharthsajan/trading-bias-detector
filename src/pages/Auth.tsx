@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,6 +24,7 @@ const featurePoints = [
 
 export default function Auth() {
   const { user, loading, signIn, signUp } = useAuth();
+  const { language, toggleLanguage } = useLanguage();
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -81,13 +83,23 @@ export default function Auth() {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={toggleMode}
-            className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors px-3 py-2 rounded-lg hover:bg-accent/50"
-          >
-            {isSignUp ? 'Already have an account?' : 'Need an account?'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleLanguage}
+              title={language === 'en' ? 'Set language to French' : 'Set language to English'}
+              className="text-xs font-semibold text-muted-foreground hover:text-primary transition-colors px-2.5 py-2 rounded-lg hover:bg-accent/50"
+            >
+              {language === 'en' ? 'FR' : 'EN'}
+            </button>
+            <button
+              type="button"
+              onClick={toggleMode}
+              className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors px-3 py-2 rounded-lg hover:bg-accent/50"
+            >
+              {isSignUp ? 'Already have an account?' : 'Need an account?'}
+            </button>
+          </div>
         </div>
       </header>
 

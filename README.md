@@ -1,48 +1,85 @@
-# National Bank Bias Detector
+# National Bank Trading Bias Detector
 
-A full-stack tool that analyzes trading history to detect psychological biases: **overtrading**, **loss aversion**, and **revenge trading**. Upload a CSV of your trades and view an interactive, dark-themed dashboard with a bias score, heatmap, and trade journal.
+Built for the **SESA x National Bank Hackathon** by:
+- Jordan Yang
+- Larry Wang
+- Emily Hyuhn
+- Sid the Jit
 
-## Tech stack
+## Overview
 
-- **Frontend:** React, Vite, Tailwind CSS, Shadcn UI, Recharts, Lucide. Auth and persistence via **Supabase**.
-- **Backend:** Python 3.12, FastAPI, Polars (high-performance CSV processing). Uses **uv** for dependency management.
+This project helps traders upload and analyze trade history to identify behavioral bias and improve risk discipline.  
+It includes bias detection, portfolio optimization recommendations, and an AI coach experience (Laurent Ferreira) with:
+- Persistent chat history
+- Insights panel (bias summary, charts, heatmap, suggestions)
+- A moving mascot trigger (`mascot-walking.gif`) that walks around the page border
 
-## CSV format
+## Current Features
 
-Expected headers: **Timestamp**, **Buy/Sell**, **Asset**, **Quantity**, **Price**, **P/L**, **Balance**.
+- Auth with Supabase
+- Upload CSV or add trades manually
+- Dashboard with:
+  - P/L index by stock
+  - 6-factor hexagonal bias radar (`overtrading`, `loss_aversion`, `revenge_trading`, `disposition_effect`, `anchoring`, `confirmation_bias`)
+  - Recent trade table + quick clear
+- All Trades page:
+  - Server-side pagination/search
+  - Per-trade delete and clear-all
+- Bias Analysis and Risk Profile generation
+- Portfolio Analysis:
+  - Allocation charts and concentration metrics
+  - Optimization recommendations
+  - "Ask Laurent" handoff to AI coach with prefilled portfolio prompt
+- AI Coach:
+  - Dedicated coach page
+  - Global moving mascot launcher
+  - Clear chat history
+  - Context-aware responses using trade, bias, insights, and portfolio optimization context
+
+## Tech Stack
+
+- Frontend: React, Vite, TypeScript, Tailwind, shadcn/ui, Recharts
+- Backend services: Supabase (Auth, Postgres, Edge Functions)
+- Optional analysis API: FastAPI + Polars (`backend/`)
 
 ## Prerequisites
 
-- Node.js (for the frontend)
-- Python 3.12+ and [uv](https://docs.astral.sh/uv/) (for the backend)
+- Node.js 18+ and npm
+- Supabase project (URL + anon key)
+- Optional: Python 3.12+ and `uv` for the FastAPI service
 
-## Quick start
+## Environment Setup
 
-### 1. Frontend
+Copy the template and fill values:
 
 ```bash
-npm install
 cp .env.example .env
 ```
 
-Edit `.env` and set:
+Required:
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-- `VITE_SUPABASE_URL` – your Supabase project URL  
-- `VITE_SUPABASE_PUBLISHABLE_KEY` – your Supabase anon key  
+Optional:
+- `VITE_API_URL` (FastAPI endpoint, defaults to `http://localhost:8000` if used)
+- `VITE_AI_COACH_AVATAR_URL` (coach profile image)
+- `VITE_AI_COACH_MASCOT_URL` (moving launcher image, defaults to `/mascot-walking.gif`)
 
-Optional (for bias analysis API):
-
-- `VITE_API_URL=http://localhost:8000` – backend URL (defaults to this if unset)
-
-Then:
+## Run Frontend
 
 ```bash
+npm install
 npm run dev
 ```
 
-App runs at http://localhost:5173 (or the port Vite prints).
+Production build:
 
-### 2. Backend (bias analysis API)
+```bash
+npm run build
+npm run preview
+```
+
+## Run Optional FastAPI Service
 
 ```bash
 cd backend
@@ -50,35 +87,50 @@ uv sync
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-API docs: http://localhost:8000/docs  
+API docs: `http://localhost:8000/docs`
 
-If port 8000 is in use, see [backend/README.md](backend/README.md) for using another port and setting `VITE_API_URL`.
+## AI Coach Edge Function
 
-## What you get
+The app calls Supabase Edge Function `ai-coach`.
 
-- **Upload:** Drop or pick a CSV on the Analysis page; the backend runs the bias engine and returns results.
-- **Bias score:** A 0–100 radial gauge (higher = more biased).
-- **Heatmap:** Trading intensity by hour of day.
-- **Trade journal:** Table of all trades with **biased** rows highlighted in red (overtrading, loss aversion, revenge trading).
-- **Supabase:** Sign in and optionally save trades and analyses for later.
+If you deploy/update it, ensure:
+1. Function is deployed.
+2. Secret `LOVABLE_API_KEY` is set in Supabase project secrets.
 
-## Project structure
+## CSV Notes
 
-- `src/` – React app (pages, components, Supabase client).
-- `backend/` – FastAPI app and Polars bias engine (`app/bias_engine.py`, `app/main.py`).
-- `docs/DEPLOYMENT.md` – Vercel + Supabase deployment.
-- `backend/README.md` – Backend setup, run, and endpoints.
+Parser supports flexible headers. Minimum required columns are:
+- timestamp/date
+- action (buy/sell)
+- asset/symbol
+
+Additional useful columns:
+- quantity
+- entry_price
+- exit_price
+- pnl
+- account_balance
+- notes
+
+## Key Scripts
+
+- `npm run dev` - start local frontend
+- `npm run build` - production build
+- `npm run preview` - preview build
+- `npm run lint` - lint project
+- `npm run test` - run Vitest tests
+
+## Project Structure
+
+- `src/` - frontend app
+- `src/pages/` - main product pages
+- `src/components/` - UI + coach components
+- `src/lib/` - data/services/insight logic
+- `supabase/` - migrations + edge functions
+- `backend/` - optional FastAPI analysis API
+- `docs/DEPLOYMENT.md` - deployment notes
 
 ## Deployment
 
-See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for deploying the frontend to Vercel and using Supabase (no AWS).
-
-## Bias detection (backend)
-
-The engine in `backend/app/bias_engine.py` implements:
-
-- **Overtrading:** >5 trades per hour or >10% of balance per ticket.
-- **Loss aversion:** Compares duration of losing vs winning trades and average loss size.
-- **Revenge trading:** Trades opened within 30 minutes of a loss with quantity >1.5× the previous trade.
-
-Logic is modular so you can add e.g. sentiment analysis later.
+Use Vercel for frontend and Supabase for backend services.  
+See `docs/DEPLOYMENT.md` for deployment steps.

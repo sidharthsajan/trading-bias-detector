@@ -4,6 +4,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { LanguageProvider } from "@/hooks/useLanguage";
+import AutoTranslate from "@/components/AutoTranslate";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import UploadTrades from "./pages/UploadTrades";
@@ -35,24 +37,27 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
-        <AuthProvider>
-          <Routes>
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/upload" element={<ProtectedRoute><UploadTrades /></ProtectedRoute>} />
-            <Route path="/analysis" element={<ProtectedRoute><BiasAnalysis /></ProtectedRoute>} />
-            <Route path="/risk-profile" element={<ProtectedRoute><RiskProfile /></ProtectedRoute>} />
-            <Route path="/ai-coach" element={<ProtectedRoute><AICoach /></ProtectedRoute>} />
-            <Route path="/emotions" element={<ProtectedRoute><EmotionalTracker /></ProtectedRoute>} />
-            <Route path="/portfolio" element={<ProtectedRoute><Portfolio /></ProtectedRoute>} />
-            <Route path="/trades" element={<ProtectedRoute><Trades /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AuthProvider>
-      </BrowserRouter>
+      <LanguageProvider>
+        <BrowserRouter>
+          <AutoTranslate />
+          <AuthProvider>
+            <Routes>
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/upload" element={<ProtectedRoute><UploadTrades /></ProtectedRoute>} />
+              <Route path="/analysis" element={<ProtectedRoute><BiasAnalysis /></ProtectedRoute>} />
+              <Route path="/risk-profile" element={<ProtectedRoute><RiskProfile /></ProtectedRoute>} />
+              <Route path="/ai-coach" element={<ProtectedRoute><AICoach /></ProtectedRoute>} />
+              <Route path="/emotions" element={<ProtectedRoute><EmotionalTracker /></ProtectedRoute>} />
+              <Route path="/portfolio" element={<ProtectedRoute><Portfolio /></ProtectedRoute>} />
+              <Route path="/trades" element={<ProtectedRoute><Trades /></ProtectedRoute>} />
+              <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </AuthProvider>
+        </BrowserRouter>
+      </LanguageProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );

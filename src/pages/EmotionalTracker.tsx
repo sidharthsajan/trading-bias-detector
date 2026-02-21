@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { Heart, Plus, Loader2 } from 'lucide-react';
+import { Heart, Plus, Loader2, Trash2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 const EMOTIONS = [
@@ -29,6 +29,7 @@ export default function EmotionalTracker() {
   const [intensity, setIntensity] = useState([5]);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
     if (user) fetchTags();
@@ -63,6 +64,24 @@ export default function EmotionalTracker() {
     setSaving(false);
   };
 
+  const clearAllEntries = async () => {
+    if (!user || tags.length === 0 || clearing) return;
+
+    const confirmed = window.confirm('Clear all emotional tracker entries? This cannot be undone.');
+    if (!confirmed) return;
+
+    setClearing(true);
+    const { error } = await supabase.from('emotional_tags').delete().eq('user_id', user.id);
+
+    if (error) {
+      toast({ title: 'Clear failed', description: error.message, variant: 'destructive' });
+    } else {
+      setTags([]);
+      toast({ title: 'Entries cleared' });
+    }
+    setClearing(false);
+  };
+
   // Chart: emotion frequency
   const emotionCounts = EMOTIONS.map(e => ({
     name: e.label,
@@ -73,11 +92,17 @@ export default function EmotionalTracker() {
   return (
     <AppLayout>
       <div className="space-y-8 animate-fade-in max-w-4xl">
-        <div>
-          <h1 className="text-3xl font-display font-bold flex items-center gap-2">
-            <Heart className="w-8 h-8 text-primary" /> Emotional Tracker
-          </h1>
-          <p className="text-muted-foreground mt-1">Log your emotional state to correlate with trading performance</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-display font-bold flex items-center gap-2">
+              <Heart className="w-8 h-8 text-primary" /> Emotional Tracker
+            </h1>
+            <p className="text-muted-foreground mt-1">Log your emotional state to correlate with trading performance</p>
+          </div>
+          <Button variant="destructive" onClick={clearAllEntries} disabled={clearing || tags.length === 0}>
+            {clearing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
+            Clear Entries
+          </Button>
         </div>
 
         {/* Log new emotion */}

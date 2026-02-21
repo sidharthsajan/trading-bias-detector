@@ -24,6 +24,7 @@ export default function Trades() {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [page, setPage] = useState(1);
+  const [pageInput, setPageInput] = useState('1');
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedQuery(query), 250);
@@ -57,6 +58,10 @@ export default function Trades() {
     void loadTrades(page, debouncedQuery);
   }, [user, page, debouncedQuery, loadTrades]);
 
+  useEffect(() => {
+    setPageInput(String(page));
+  }, [page]);
+
   const visiblePnl = useMemo(
     () => trades.reduce((sum, trade) => sum + (Number(trade.pnl) || 0), 0),
     [trades],
@@ -65,6 +70,18 @@ export default function Trades() {
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const showingStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const showingEnd = totalCount === 0 ? 0 : Math.min(page * PAGE_SIZE, totalCount);
+
+  const jumpToPage = () => {
+    const requestedPage = Number.parseInt(pageInput, 10);
+    if (Number.isNaN(requestedPage)) {
+      setPageInput(String(page));
+      return;
+    }
+
+    const clampedPage = Math.max(1, Math.min(totalPages, requestedPage));
+    setPage(clampedPage);
+    setPageInput(String(clampedPage));
+  };
 
   const deleteTrade = async (tradeId: string) => {
     if (!user) return;
@@ -249,6 +266,32 @@ export default function Trades() {
                   >
                     Next
                   </Button>
+                  <div className="flex items-center gap-1 ml-2">
+                    <span className="text-xs text-muted-foreground">Jump to</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      value={pageInput}
+                      onChange={(event) => setPageInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          jumpToPage();
+                        }
+                      }}
+                      className="h-8 w-20"
+                      disabled={refreshing || deletingAll}
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={jumpToPage}
+                      disabled={refreshing || deletingAll}
+                    >
+                      Go
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
