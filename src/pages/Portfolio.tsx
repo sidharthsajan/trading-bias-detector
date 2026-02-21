@@ -1,16 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { formatMoney } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Shield, TrendingUp, TrendingDown, BarChart3 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { buildPortfolioInsights } from '@/lib/portfolioInsights';
+import { AI_COACH_DRAFT_KEY } from '@/lib/aiCoach';
+import { Shield, TrendingUp, TrendingDown, BarChart3, MessageSquare } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 const COLORS = ['hsl(350, 84%, 46%)', 'hsl(196, 67%, 45%)', 'hsl(160, 60%, 45%)', 'hsl(40, 90%, 55%)', 'hsl(270, 60%, 55%)', 'hsl(196, 67%, 45%)'];
 
 export default function Portfolio() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [trades, setTrades] = useState<any[]>([]);
 
   useEffect(() => {
@@ -20,29 +25,35 @@ export default function Portfolio() {
     }
   }, [user]);
 
-  // Asset allocation
-  const assetPositions: Record<string, { value: number; count: number }> = {};
-  trades.forEach(t => {
-    if (!assetPositions[t.asset]) assetPositions[t.asset] = { value: 0, count: 0 };
-    assetPositions[t.asset].value += Number(t.quantity) * Number(t.entry_price);
-    assetPositions[t.asset].count++;
-  });
-  const allocationData = Object.entries(assetPositions)
-    .map(([name, { value }]) => ({ name, value: Math.round(Math.abs(value) * 100) / 100 }))
-    .sort((a, b) => b.value - a.value);
+  const portfolio = useMemo(() => buildPortfolioInsights(trades), [trades]);
+  const allocationData = portfolio.allocationData;
+  const totalValue = portfolio.totalValue;
+  const topAssetPct = portfolio.topAssetPct;
 
-  // PnL over time
   let cumPnl = 0;
   const pnlTimeline = trades
-    .filter(t => t.pnl !== null)
-    .map(t => {
-      cumPnl += Number(t.pnl);
-      return { date: new Date(t.timestamp).toLocaleDateString(), pnl: Math.round(cumPnl * 100) / 100 };
+    .filter((trade) => trade.pnl !== null)
+    .map((trade) => {
+      cumPnl += Number(trade.pnl);
+      return { date: new Date(trade.timestamp).toLocaleDateString(), pnl: Math.round(cumPnl * 100) / 100 };
     });
 
-  // Concentration risk
-  const totalValue = allocationData.reduce((s, a) => s + a.value, 0);
-  const topAssetPct = totalValue > 0 ? ((allocationData[0]?.value || 0) / totalValue * 100).toFixed(1) : '0';
+  const openCoachWithPortfolioPrompt = () => {
+    const recommendationText = portfolio.recommendations
+      .map((item) => `- ${item.title}: ${item.detail}`)
+      .join('\n');
+
+    const draft = [
+      'Please review my portfolio optimization recommendations and give me a concrete action plan.',
+      `Top concentration: ${portfolio.topAssetName} at ${portfolio.topAssetPct}%`,
+      `Assets traded: ${portfolio.assetCount}`,
+      'Current recommendations:',
+      recommendationText,
+    ].join('\n');
+
+    localStorage.setItem(AI_COACH_DRAFT_KEY, draft);
+    navigate('/ai-coach');
+  };
 
   return (
     <AppLayout>
@@ -74,14 +85,14 @@ export default function Portfolio() {
               <Card className="glass-card">
                 <CardContent className="pt-6 text-center">
                   <p className="text-sm text-muted-foreground">Assets Traded</p>
-                  <p className="text-2xl font-display font-bold">{allocationData.length}</p>
+                  <p className="text-2xl font-display font-bold">{portfolio.assetCount}</p>
                 </CardContent>
               </Card>
               <Card className="glass-card">
                 <CardContent className="pt-6 text-center">
                   <p className="text-sm text-muted-foreground">Top Concentration</p>
-                  <p className={`text-2xl font-display font-bold ${Number(topAssetPct) > 50 ? 'text-destructive' : 'text-success'}`}>{topAssetPct}%</p>
-                  <p className="text-xs text-muted-foreground">{allocationData[0]?.name}</p>
+                  <p className={`text-2xl font-display font-bold ${topAssetPct > 50 ? 'text-destructive' : 'text-success'}`}>{topAssetPct.toFixed(1)}%</p>
+                  <p className="text-xs text-muted-foreground">{portfolio.topAssetName}</p>
                 </CardContent>
               </Card>
             </div>
@@ -97,7 +108,7 @@ export default function Portfolio() {
                       <Pie data={allocationData} cx="50%" cy="50%" outerRadius={100} innerRadius={50} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
                         {allocationData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(v: number) => formatMoney(v)} />
+                      <Tooltip formatter={(value: number) => formatMoney(value)} />
                     </PieChart>
                   </ResponsiveContainer>
                 </CardContent>
@@ -128,31 +139,36 @@ export default function Portfolio() {
               </Card>
             </div>
 
-            {/* Optimization recommendations */}
             <Card className="glass-card">
-              <CardHeader>
-                <CardTitle className="font-display">Optimization Recommendations</CardTitle>
-                <CardDescription>Based on your portfolio composition</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="font-display">Optimization Recommendations</CardTitle>
+                  <CardDescription>Based on your portfolio composition</CardDescription>
+                </div>
+                <Button variant="outline" onClick={openCoachWithPortfolioPrompt}>
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Ask Laurent
+                </Button>
               </CardHeader>
               <CardContent className="space-y-3">
-                {Number(topAssetPct) > 40 && (
-                  <div className="flex gap-3 p-3 rounded-lg bg-warning/5 border border-warning/20">
-                    <TrendingDown className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+                {portfolio.recommendations.map((item) => (
+                  <div
+                    key={item.title}
+                    className={`flex gap-3 p-3 rounded-lg border ${
+                      item.severity === 'high'
+                        ? 'bg-warning/5 border-warning/20'
+                        : 'bg-primary/5 border-primary/20'
+                    }`}
+                  >
+                    {item.severity === 'high'
+                      ? <TrendingDown className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+                      : <TrendingUp className="w-5 h-5 text-primary shrink-0 mt-0.5" />}
                     <div>
-                      <p className="font-medium text-sm">High concentration risk</p>
-                      <p className="text-xs text-muted-foreground">{allocationData[0]?.name} makes up {topAssetPct}% of your volume. Consider diversifying across more assets to reduce risk.</p>
+                      <p className="font-medium text-sm">{item.title}</p>
+                      <p className="text-xs text-muted-foreground">{item.detail}</p>
                     </div>
                   </div>
-                )}
-                {allocationData.length < 4 && (
-                  <div className="flex gap-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
-                    <TrendingUp className="w-5 h-5 text-primary shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-medium text-sm">Limited diversification</p>
-                      <p className="text-xs text-muted-foreground">Trading only {allocationData.length} asset(s) increases exposure to sector-specific risks. Consider adding uncorrelated instruments.</p>
-                    </div>
-                  </div>
-                )}
+                ))}
               </CardContent>
             </Card>
           </>

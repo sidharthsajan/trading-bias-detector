@@ -11,7 +11,7 @@ serve(async (req) => {
   }
 
   try {
-    const { message, trades, biases, history } = await req.json();
+    const { message, trades, biases, insights, portfolio, history } = await req.json();
 
     const tradeSummary = trades?.length > 0
       ? `The trader has ${trades.length} recent trades. Total P/L: $${trades.reduce((s: number, t: any) => s + (Number(t.pnl) || 0), 0).toFixed(2)}. Win rate: ${(trades.filter((t: any) => Number(t.pnl) > 0).length / trades.length * 100).toFixed(0)}%. Most traded assets: ${[...new Set(trades.map((t: any) => t.asset))].slice(0, 5).join(', ')}.`
@@ -20,6 +20,22 @@ serve(async (req) => {
     const biasSummary = biases?.length > 0
       ? `Detected biases: ${biases.map((b: any) => `${b.title} (${b.severity}): ${b.description}`).join('; ')}`
       : 'No biases detected yet.';
+
+    const insightSummary = insights
+      ? `Precomputed coach insights:
+- Bias summaries: ${(insights.biasSummaries || []).join(' | ') || 'none'}
+- Stats: total trades ${insights.stats?.totalTrades ?? 0}, win rate ${insights.stats?.winRate ?? 0}%, total P/L ${insights.stats?.totalPnl ?? 0}, avg trades/day ${insights.stats?.avgTradesPerDay ?? 0}
+- Heatmap signal: ${insights.stats?.highVolatilityFollowUps ?? 0} high-volatility follow-up trades
+- Suggestions: ${(insights.suggestions || []).map((s: any) => `${s.title}: ${s.recommendation}`).join(' | ') || 'none'}`
+      : 'No precomputed insights provided.';
+
+    const portfolioSummary = portfolio
+      ? `Portfolio optimization context:
+- Total traded notional: ${portfolio.totalValue ?? 0}
+- Assets traded: ${portfolio.assetCount ?? 0}
+- Top concentration: ${portfolio.topAssetName ?? 'N/A'} at ${portfolio.topAssetPct ?? 0}%
+- Recommendations: ${(portfolio.recommendations || []).map((r: any) => `${r.title}: ${r.detail}`).join(' | ') || 'none'}`
+      : 'No portfolio optimization context provided.';
 
     const chatHistory = (history || []).map((m: any) => ({
       role: m.role,
@@ -37,8 +53,22 @@ serve(async (req) => {
 Current trader context:
 ${tradeSummary}
 ${biasSummary}
+${insightSummary}
+${portfolioSummary}
 
-Be empathetic but direct. Use specific data from their trades when possible. Keep responses concise (2-4 paragraphs max). Reference behavioral finance concepts.`;
+Response requirements:
+1) Use markdown headings exactly in this order:
+## Bias Summary
+## Graphical Insights
+## Personalized Suggestions
+2) Bias Summary: include at least one concrete bias statement using trader data.
+3) Graphical Insights: interpret timeline/heatmap style behavior in plain language (e.g., clustering by hour/day, drawdown periods, asset concentration).
+4) Personalized Suggestions: include actionable bullets for:
+- daily trade limits
+- stop-loss discipline
+- cooling-off periods
+- journaling prompts for trading psychology
+5) Be concise, specific, and behavior-focused.`;
 
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
