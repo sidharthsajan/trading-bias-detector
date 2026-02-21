@@ -7,14 +7,18 @@ import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { MessageSquare, Send, Loader2, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import CoachInsightsPanel from '@/components/CoachInsightsPanel';
 import {
   AI_COACH_AVATAR_URL,
+  AI_COACH_DRAFT_KEY,
   AI_COACH_NAME,
   ChatMessage,
   clearCoachMessages,
+  fetchCoachContext,
   fetchCoachMessages,
   sendCoachMessage,
 } from '@/lib/aiCoach';
+import type { CoachInsights } from '@/lib/coachInsights';
 
 export default function AICoach() {
   const { user } = useAuth();
@@ -24,24 +28,38 @@ export default function AICoach() {
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
+  const [insights, setInsights] = useState<CoachInsights | null>(null);
+  const [loadingInsights, setLoadingInsights] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const fetchMessages = useCallback(async () => {
     if (!user) return;
     setLoading(true);
+    setLoadingInsights(true);
     try {
-      const data = await fetchCoachMessages(user.id);
-      setMessages(data);
+      const [chatData, context] = await Promise.all([
+        fetchCoachMessages(user.id),
+        fetchCoachContext(user.id),
+      ]);
+      setMessages(chatData);
+      setInsights(context.insights);
     } catch (error: any) {
       toast({ title: 'Failed to load chat history', description: error?.message || 'Unknown error', variant: 'destructive' });
     } finally {
       setLoading(false);
+      setLoadingInsights(false);
     }
   }, [user, toast]);
 
   useEffect(() => {
     if (!user) return;
     void fetchMessages();
+
+    const draft = localStorage.getItem(AI_COACH_DRAFT_KEY);
+    if (draft) {
+      setInput(draft);
+      localStorage.removeItem(AI_COACH_DRAFT_KEY);
+    }
   }, [user, fetchMessages]);
 
   useEffect(() => {
@@ -89,7 +107,7 @@ export default function AICoach() {
 
   return (
     <AppLayout>
-      <div className="h-[calc(100vh-4rem)] flex flex-col animate-fade-in">
+      <div className="h-[calc(100vh-4rem)] flex flex-col animate-fade-in gap-4">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-3xl font-display font-bold flex items-center gap-2">
@@ -106,6 +124,8 @@ export default function AICoach() {
             Clear Chat History
           </Button>
         </div>
+
+        <CoachInsightsPanel insights={insights} loading={loadingInsights} />
 
         <Card className="glass-card flex-1 flex flex-col overflow-hidden">
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4">
