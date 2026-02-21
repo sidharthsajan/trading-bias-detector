@@ -1,0 +1,15 @@
+{
+  "asset_encoding": {
+    "AAPL": 0,
+    "AMZN": 1,
+    "GOOG": 2,
+    "MSFT": 3,
+    "NFLX": 4,
+    "NVDA": 5,
+    "TSLA": 6
+  },
+  "side_encoding": {
+    "BUY": 0,
+    "SELL": 1
+  }
+}
