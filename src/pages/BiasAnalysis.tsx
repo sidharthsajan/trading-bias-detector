@@ -166,6 +166,7 @@ export default function BiasAnalysis() {
     ? apiResult.biases
     : results.length > 0
       ? results
+<<<<<<< Updated upstream
       : savedResults.map(s => ({
           type: s.analysis_type,
           severity: s.severity as BiasResult['severity'],
@@ -174,6 +175,24 @@ export default function BiasAnalysis() {
           details: s.details || {},
           score: 50,
         }));
+=======
+      : savedResults.map(s => {
+          const detailsObj = (s.details || {}) as Record<string, unknown>;
+          const raw = detailsObj.score;
+          const score =
+            typeof raw === 'number' && Number.isFinite(raw)
+              ? Math.max(0, Math.min(100, raw))
+              : (typeof raw === 'string' ? Math.max(0, Math.min(100, Number(raw))) : null) ?? FALLBACK_BIAS_SCORE;
+          return {
+            type: s.analysis_type,
+            severity: s.severity as BiasResult['severity'],
+            title: s.title,
+            description: s.description,
+            details: s.details || {},
+            score,
+          };
+        });
+>>>>>>> Stashed changes
 
   const radarData = [
     { bias: 'Overtrading', score: displayResults.find(r => r.type === 'overtrading')?.score ?? 0 },
@@ -181,7 +200,23 @@ export default function BiasAnalysis() {
     { bias: 'Revenge', score: displayResults.find(r => r.type === 'revenge_trading')?.score ?? 0 },
   ];
 
-  const biasScore = apiResult?.bias_score ?? (displayResults.length ? Math.round(displayResults.reduce((s, b) => s + (b.score ?? 0), 0) / displayResults.length) : 0);
+  // Aggregate bias score 0–100 (median of bias scores so one severe bias doesn't force overall to 100)
+  const biasScore = (() => {
+    const fromApi = apiResult?.bias_score;
+    if (fromApi != null && fromApi !== '') {
+      const n = Number(fromApi);
+      return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0;
+    }
+    if (!displayResults.length) return 0;
+    const scores = displayResults
+      .map((b) => (typeof b.score === 'number' && Number.isFinite(b.score) ? b.score : Number(b.score) || 0))
+      .filter((s) => s >= 0 && s <= 100)
+      .sort((a, b) => a - b);
+    if (!scores.length) return 0;
+    const n = scores.length;
+    const median = n % 2 ? scores[n >> 1] : (scores[(n >> 1) - 1] + scores[n >> 1]) / 2;
+    return Math.round(Math.max(0, Math.min(100, median)));
+  })();
   const tradeFlags = apiResult?.trade_flags ?? { overtrading: [], loss_aversion: [], revenge_trading: [] };
   const allBiasedIndices = new Set([...tradeFlags.overtrading, ...tradeFlags.loss_aversion, ...tradeFlags.revenge_trading]);
   const journalTrades = apiResult?.trades ?? trades.map(t => ({
