@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
 import { supabase } from '@/integrations/supabase/client';
 import { formatMoney } from '@/lib/format';
+import { translateUiText } from '@/lib/translations';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { buildPortfolioInsights } from '@/lib/portfolioInsights';
@@ -15,8 +17,11 @@ const COLORS = ['hsl(350, 84%, 46%)', 'hsl(196, 67%, 45%)', 'hsl(160, 60%, 45%)'
 
 export default function Portfolio() {
   const { user } = useAuth();
+  const { language } = useLanguage();
   const navigate = useNavigate();
   const [trades, setTrades] = useState<any[]>([]);
+  const dateLocale = language === 'fr' ? 'fr-CA' : 'en-US';
+  const cumulativePnlSeriesLabel = translateUiText('Cumulative P/L', language);
 
   useEffect(() => {
     if (user) {
@@ -30,13 +35,20 @@ export default function Portfolio() {
   const totalValue = portfolio.totalValue;
   const topAssetPct = portfolio.topAssetPct;
 
-  let cumPnl = 0;
-  const pnlTimeline = trades
-    .filter((trade) => trade.pnl !== null)
-    .map((trade) => {
+  const pnlTimeline = useMemo(() => {
+    const sortedWithPnl = [...trades]
+      .filter((trade) => Number.isFinite(Number(trade.pnl)))
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    let cumPnl = 0;
+    return sortedWithPnl.map((trade) => {
       cumPnl += Number(trade.pnl);
-      return { date: new Date(trade.timestamp).toLocaleDateString(), pnl: Math.round(cumPnl * 100) / 100 };
+      return {
+        timestamp: new Date(trade.timestamp).getTime(),
+        pnl: Math.round(cumPnl * 100) / 100,
+      };
     });
+  }, [trades]);
 
   const openCoachWithPortfolioPrompt = () => {
     const recommendationText = portfolio.recommendations
@@ -123,10 +135,18 @@ export default function Portfolio() {
                     <ResponsiveContainer width="100%" height={300}>
                       <LineChart data={pnlTimeline}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={10} />
+                        <XAxis
+                          dataKey="timestamp"
+                          type="number"
+                          domain={['dataMin', 'dataMax']}
+                          tickFormatter={(value) => new Date(Number(value)).toLocaleDateString(dateLocale)}
+                          stroke="hsl(var(--muted-foreground))"
+                          fontSize={10}
+                        />
                         <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickFormatter={(value) => formatMoney(value)} />
                         <Tooltip
-                          formatter={(value: number) => formatMoney(value)}
+                          labelFormatter={(value) => new Date(Number(value)).toLocaleString(dateLocale)}
+                          formatter={(value: number) => [formatMoney(value), cumulativePnlSeriesLabel]}
                           contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }}
                         />
                         <Line type="monotone" dataKey="pnl" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,18 +12,21 @@ import { Heart, Plus, Loader2, Trash2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 const EMOTIONS = [
-  { value: 'calm', emoji: '😌', label: 'Calm', color: 'hsl(160, 60%, 45%)' },
-  { value: 'anxious', emoji: '😰', label: 'Anxious', color: 'hsl(40, 90%, 55%)' },
-  { value: 'excited', emoji: '🤩', label: 'Excited', color: 'hsl(270, 60%, 55%)' },
-  { value: 'frustrated', emoji: '😤', label: 'Frustrated', color: 'hsl(350, 84%, 46%)' },
-  { value: 'fearful', emoji: '😨', label: 'Fearful', color: 'hsl(220, 25%, 40%)' },
-  { value: 'confident', emoji: '😎', label: 'Confident', color: 'hsl(160, 80%, 35%)' },
-  { value: 'stressed', emoji: '😩', label: 'Stressed', color: 'hsl(0, 70%, 50%)' },
-  { value: 'neutral', emoji: '😐', label: 'Neutral', color: 'hsl(220, 10%, 50%)' },
+  { value: 'calm', emoji: '😌', label: { en: 'Calm', fr: 'Calme' }, color: 'hsl(160, 60%, 45%)' },
+  { value: 'anxious', emoji: '😰', label: { en: 'Anxious', fr: 'Anxieux' }, color: 'hsl(40, 90%, 55%)' },
+  { value: 'excited', emoji: '🤩', label: { en: 'Excited', fr: 'Excite' }, color: 'hsl(270, 60%, 55%)' },
+  { value: 'frustrated', emoji: '😤', label: { en: 'Frustrated', fr: 'Frustre' }, color: 'hsl(350, 84%, 46%)' },
+  { value: 'fearful', emoji: '😨', label: { en: 'Fearful', fr: 'Craintif' }, color: 'hsl(220, 25%, 40%)' },
+  { value: 'confident', emoji: '😎', label: { en: 'Confident', fr: 'Confiant' }, color: 'hsl(160, 80%, 35%)' },
+  { value: 'stressed', emoji: '😩', label: { en: 'Stressed', fr: 'Stresse' }, color: 'hsl(0, 70%, 50%)' },
+  { value: 'neutral', emoji: '😐', label: { en: 'Neutral', fr: 'Neutre' }, color: 'hsl(220, 10%, 50%)' },
 ];
+
+const getEmotionLabel = (emotion: (typeof EMOTIONS)[number], language: 'en' | 'fr') => emotion.label[language];
 
 export default function EmotionalTracker() {
   const { user } = useAuth();
+  const { language } = useLanguage();
   const { toast } = useToast();
   const [tags, setTags] = useState<any[]>([]);
   const [selectedEmotion, setSelectedEmotion] = useState('neutral');
@@ -86,7 +90,7 @@ export default function EmotionalTracker() {
 
   // Chart: emotion frequency
   const emotionCounts = EMOTIONS.map(e => ({
-    name: e.label,
+    name: getEmotionLabel(e, language),
     count: tags.filter(t => t.emotional_state === e.value).length,
     color: e.color,
   })).filter(e => e.count > 0);
@@ -126,7 +130,7 @@ export default function EmotionalTracker() {
                   }`}
                 >
                   <span className="text-2xl block">{e.emoji}</span>
-                  <span className="text-xs font-medium mt-1 block">{e.label}</span>
+                  <span className="text-xs font-medium mt-1 block">{getEmotionLabel(e, language)}</span>
                 </button>
               ))}
             </div>
@@ -182,7 +186,7 @@ export default function EmotionalTracker() {
                       <span className="text-xl">{emotion?.emoji}</span>
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm">{emotion?.label}</span>
+                          <span className="font-medium text-sm">{emotion ? getEmotionLabel(emotion, language) : String(tag.emotional_state)}</span>
                           <span className="text-xs text-muted-foreground">Intensity: {tag.intensity}/10</span>
                         </div>
                         {tag.notes && <p className="text-xs text-muted-foreground mt-0.5">{tag.notes}</p>}

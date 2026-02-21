@@ -64,7 +64,9 @@ export default function UploadTrades() {
     toast({ title: `Parsed ${trades.length} trades` });
   }, [toast]);
 
-  const BATCH_SIZE = 250; // Smaller chunks provide smoother visible save progress
+  // Larger chunks + limited parallelism substantially reduce total upload time.
+  const BATCH_SIZE = 2000;
+  const MAX_PARALLEL_BATCHES = 3;
   const PARSED_PREVIEW_SIZE = 50;
 
   const saveTrades = async (tradesToSave: Trade[]) => {
@@ -74,31 +76,55 @@ export default function UploadTrades() {
     setSaveProgress({ done: 0, total });
 
     try {
-      for (let offset = 0; offset < total; offset += BATCH_SIZE) {
-        const batch = tradesToSave.slice(offset, offset + BATCH_SIZE);
-        const rows = batch.map(t => ({
-          user_id: user.id,
-          timestamp: new Date(t.timestamp).toISOString(),
-          action: t.action,
-          asset: t.asset,
-          quantity: t.quantity,
-          entry_price: t.entry_price,
-          exit_price: t.exit_price ?? null,
-          pnl: t.pnl ?? null,
-          account_balance: t.account_balance ?? null,
-          notes: t.notes || null,
-        }));
-        const { error } = await supabase.from('trades').insert(rows);
-        if (error) {
-          toast({ title: 'Save failed', description: error.message, variant: 'destructive' });
-          return;
-        }
-        setSaveProgress({ done: Math.min(offset + batch.length, total), total });
-        // Yield to UI so it can update progress
-        if (offset + BATCH_SIZE < total) {
-          await new Promise(r => setTimeout(r, 0));
-        }
+      const rows = tradesToSave.map((t) => ({
+        user_id: user.id,
+        timestamp: new Date(t.timestamp).toISOString(),
+        action: t.action,
+        asset: t.asset,
+        quantity: t.quantity,
+        entry_price: t.entry_price,
+        exit_price: t.exit_price ?? null,
+        pnl: t.pnl ?? null,
+        account_balance: t.account_balance ?? null,
+        notes: t.notes || null,
+      }));
+
+      const batches: typeof rows[] = [];
+      for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
+        batches.push(rows.slice(offset, offset + BATCH_SIZE));
       }
+
+      let done = 0;
+      let nextBatchIndex = 0;
+      let failedMessage: string | null = null;
+
+      const worker = async () => {
+        while (true) {
+          if (failedMessage) return;
+          const currentIndex = nextBatchIndex;
+          nextBatchIndex += 1;
+          if (currentIndex >= batches.length) return;
+
+          const currentBatch = batches[currentIndex];
+          const { error } = await supabase.from('trades').insert(currentBatch);
+          if (error) {
+            failedMessage = error.message;
+            return;
+          }
+
+          done += currentBatch.length;
+          setSaveProgress({ done, total });
+        }
+      };
+
+      const workerCount = Math.min(MAX_PARALLEL_BATCHES, batches.length);
+      await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+      if (failedMessage) {
+        toast({ title: 'Save failed', description: failedMessage, variant: 'destructive' });
+        return;
+      }
+
       invalidateTradeCache(user.id);
       toast({ title: 'Saved!', description: `${total.toLocaleString()} trades saved successfully.` });
       setParsedTrades([]);

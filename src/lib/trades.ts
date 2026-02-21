@@ -52,6 +52,15 @@ type ClearTradesResult = {
   remainingCount: number;
 };
 
+export async function clearBiasAnalysesForUser(userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('bias_analyses')
+    .delete()
+    .eq('user_id', userId);
+
+  if (error) throw error;
+}
+
 /**
  * Clears all trades for a user in bounded batches to avoid oversized delete operations.
  */

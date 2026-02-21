@@ -57,7 +57,9 @@ export type CoachInsights = {
   };
 };
 
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+type InsightLanguage = 'en' | 'fr';
+const DAY_NAMES_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAY_NAMES_FR = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
 const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
 
 const toFiniteNumber = (value: unknown): number => {
@@ -371,4 +373,7 @@ export function buildCoachInsights(trades: InsightTrade[], biases: InsightBias[]
   };
 }
 
-export const insightDayName = (day: number) => DAY_NAMES[day] || String(day);
+export const insightDayName = (day: number, language: InsightLanguage = 'en') => {
+  const dayNames = language === 'fr' ? DAY_NAMES_FR : DAY_NAMES_EN;
+  return dayNames[day] || String(day);
+};

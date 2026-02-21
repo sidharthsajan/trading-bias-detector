@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { formatMoney } from '@/lib/format';
+import { translateUiText } from '@/lib/translations';
 import {
+  clearBiasAnalysesForUser,
   clearTradesForUser,
   fetchAllTradesForUser,
   fetchTradeCountForUser,
@@ -29,6 +32,7 @@ const BIAS_AXES = [
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { language } = useLanguage();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [trades, setTrades] = useState<any[]>([]);
@@ -53,8 +57,11 @@ export default function Dashboard() {
         supabase.from('risk_profiles').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(1),
       ]);
 
+      const loadedTrades = tradesRes.status === 'fulfilled' ? tradesRes.value || [] : [];
+      const knownTradeCount = countRes.status === 'fulfilled' ? countRes.value : loadedTrades.length;
+
       if (tradesRes.status === 'fulfilled') {
-        setTrades(tradesRes.value || []);
+        setTrades(loadedTrades);
       } else {
         toast({
           title: 'Failed to load trades',
@@ -63,18 +70,20 @@ export default function Dashboard() {
         });
       }
 
-      if (countRes.status === 'fulfilled') {
-        setTotalTradeCount(countRes.value);
+      setTotalTradeCount(knownTradeCount);
+
+      // If there is no trade data, treat bias/risk as reset even if stale rows exist.
+      if (knownTradeCount === 0) {
+        setBiases([]);
+        setRiskProfile(null);
       } else {
-        setTotalTradeCount(null);
-      }
+        if (biasesRes.status === 'fulfilled' && !biasesRes.value.error) {
+          setBiases(biasesRes.value.data || []);
+        }
 
-      if (biasesRes.status === 'fulfilled' && !biasesRes.value.error) {
-        setBiases(biasesRes.value.data || []);
-      }
-
-      if (riskRes.status === 'fulfilled' && !riskRes.value.error) {
-        setRiskProfile(riskRes.value.data?.[0] || null);
+        if (riskRes.status === 'fulfilled' && !riskRes.value.error) {
+          setRiskProfile(riskRes.value.data?.[0] || null);
+        }
       }
     } finally {
       setLoading(false);
@@ -112,6 +121,7 @@ export default function Dashboard() {
         return;
       }
 
+      await clearBiasAnalysesForUser(user.id);
       setTrades([]);
       setTotalTradeCount(0);
       setBiases([]);
@@ -131,6 +141,8 @@ export default function Dashboard() {
   const closedTrades = trades.filter((t) => t.pnl != null && t.pnl !== '');
   const winningTrades = closedTrades.filter((t) => Number(t.pnl) > 0).length;
   const winRate = closedTrades.length > 0 ? Math.round((winningTrades / closedTrades.length) * 100) : 0;
+  const knownTradeCount = totalTradeCount ?? trades.length;
+  const hasTradeData = knownTradeCount > 0;
 
   const criticalBiases = biases.filter((b) => b.severity === 'critical' || b.severity === 'high');
 
@@ -158,7 +170,7 @@ export default function Dashboard() {
     if (!selectedAsset) return [];
 
     const selectedTrades = trades
-      .filter((t) => t.asset === selectedAsset && t.pnl !== null)
+      .filter((t) => t.asset === selectedAsset && Number.isFinite(Number(t.pnl)))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     let index = 100;
@@ -167,9 +179,9 @@ export default function Dashboard() {
     return selectedTrades.map((trade) => {
       const pnl = Number(trade.pnl) || 0;
       const notional = Math.max(Math.abs((Number(trade.quantity) || 0) * (Number(trade.entry_price) || 0)), 1);
-      const pctMove = (pnl / notional) * 100;
+      const tradeReturn = pnl / notional;
       cumulativePnl += pnl;
-      index = Math.max(1, index + pctMove);
+      index = Math.max(0, index * (1 + tradeReturn));
 
       return {
         timestamp: new Date(trade.timestamp).getTime(),
@@ -189,11 +201,18 @@ export default function Dashboard() {
 
   const radarData = useMemo(
     () => BIAS_AXES.map((axis) => ({
-      bias: axis.label,
+      bias: translateUiText(axis.label, language),
       value: biasDistribution[axis.key] || 0,
     })),
-    [biasDistribution],
+    [biasDistribution, language],
   );
+
+  const dateLocale = language === 'fr' ? 'fr-CA' : 'en-US';
+  const indexSeriesLabel = translateUiText('Index', language);
+  const cumulativePnlSeriesLabel = translateUiText('Cumulative P/L', language);
+  const tradePnlSeriesLabel = translateUiText('Trade P/L', language);
+  const signalsSeriesLabel = translateUiText('Signals', language);
+  const occurrencesSeriesLabel = translateUiText('Occurrences', language);
 
   const hasRadarData = radarData.some((row) => row.value > 0);
   const radarMax = Math.max(3, ...radarData.map((row) => row.value));
@@ -228,7 +247,7 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Total Trades</p>
-                  <p className="text-3xl font-display font-bold">{(totalTradeCount ?? trades.length).toLocaleString()}</p>
+                  <p className="text-3xl font-display font-bold">{knownTradeCount.toLocaleString()}</p>
                 </div>
                 <BarChart3 className="w-10 h-10 text-primary/30" />
               </div>
@@ -263,7 +282,7 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Biases Found</p>
-                  <p className="text-3xl font-display font-bold">{biases.length}</p>
+                  <p className="text-3xl font-display font-bold">{hasTradeData ? biases.length : 'N/A'}</p>
                 </div>
                 <AlertTriangle className={`w-10 h-10 ${criticalBiases.length > 0 ? 'text-destructive/50' : 'text-warning/30'}`} />
               </div>
@@ -319,7 +338,7 @@ export default function Dashboard() {
                           dataKey="timestamp"
                           type="number"
                           domain={['dataMin', 'dataMax']}
-                          tickFormatter={(value) => new Date(Number(value)).toLocaleDateString()}
+                          tickFormatter={(value) => new Date(Number(value)).toLocaleDateString(dateLocale)}
                           stroke="hsl(var(--muted-foreground))"
                           fontSize={11}
                         />
@@ -330,11 +349,11 @@ export default function Dashboard() {
                           tickFormatter={(value) => `${Number(value).toFixed(0)}`}
                         />
                         <Tooltip
-                          labelFormatter={(value) => new Date(Number(value)).toLocaleString()}
+                          labelFormatter={(value) => new Date(Number(value)).toLocaleString(dateLocale)}
                           formatter={(value: number, name: string) => {
-                            if (name === 'index') return [`${Number(value).toFixed(2)}`, 'Index'];
-                            if (name === 'cumulativePnl') return [formatMoney(value), 'Cumulative P/L'];
-                            if (name === 'pnl') return [formatMoney(value), 'Trade P/L'];
+                            if (name === 'index') return [`${Number(value).toFixed(2)}`, indexSeriesLabel];
+                            if (name === 'cumulativePnl') return [formatMoney(value), cumulativePnlSeriesLabel];
+                            if (name === 'pnl') return [formatMoney(value), tradePnlSeriesLabel];
                             return [value, name];
                           }}
                           contentStyle={{
@@ -367,14 +386,14 @@ export default function Dashboard() {
                       <PolarAngleAxis dataKey="bias" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
                       <PolarRadiusAxis angle={90} domain={[0, radarMax]} tickCount={Math.min(5, radarMax + 1)} />
                       <Radar
-                        name="Signals"
+                        name={signalsSeriesLabel}
                         dataKey="value"
                         stroke="hsl(var(--primary))"
                         fill="hsl(var(--primary))"
                         fillOpacity={0.35}
                         strokeWidth={2}
                       />
-                      <Tooltip formatter={(value: number) => [`${value}`, 'Occurrences']} />
+                      <Tooltip formatter={(value: number) => [`${value}`, occurrencesSeriesLabel]} />
                     </RadarChart>
                   </ResponsiveContainer>
                 ) : (

@@ -17,8 +17,9 @@ export default function AutoTranslate() {
   const attributeSourceRef = useRef(new WeakMap<Element, Partial<Record<(typeof TRANSLATABLE_ATTRIBUTES)[number], string>>>());
 
   useEffect(() => {
-    const root = document.getElementById('root');
-    if (!root) return;
+    const appRoot = document.getElementById('root');
+    const body = document.body;
+    if (!appRoot || !body) return;
 
     const translateAttributes = (element: Element) => {
       for (const attr of TRANSLATABLE_ATTRIBUTES) {
@@ -107,7 +108,13 @@ export default function AutoTranslate() {
       }
     };
 
-    walk(root);
+    // Walk app root first, then any portal content mounted outside #root (Radix Select/Dropdown/Dialog portals).
+    walk(appRoot);
+    for (const child of Array.from(body.childNodes)) {
+      if (child !== appRoot) {
+        walk(child);
+      }
+    }
 
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
@@ -129,7 +136,7 @@ export default function AutoTranslate() {
       }
     });
 
-    observer.observe(root, {
+    observer.observe(body, {
       subtree: true,
       childList: true,
       characterData: true,

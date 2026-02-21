@@ -54,7 +54,7 @@ export default function RiskProfile() {
 
       if (profileRes.error) throw profileRes.error;
 
-      setProfiles(profileRes.data || []);
+      setProfiles(totalTrades === 0 ? [] : (profileRes.data || []));
       setTradeCount(totalTrades);
     } catch (error: any) {
       toast({ title: 'Failed to load risk profile', description: error?.message || 'Unknown error', variant: 'destructive' });

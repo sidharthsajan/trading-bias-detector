@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { clearTradesForUser, fetchTradeCountForUser, fetchTradesPageForUser, invalidateTradeCache } from '@/lib/trades';
+import { clearBiasAnalysesForUser, clearTradesForUser, fetchTradeCountForUser, fetchTradesPageForUser, invalidateTradeCache } from '@/lib/trades';
 import { formatMoney } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -133,6 +133,7 @@ export default function Trades() {
         return;
       }
 
+      await clearBiasAnalysesForUser(user.id);
       setTrades([]);
       setTotalCount(0);
       setAllTradeCount(0);

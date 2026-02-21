@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
 import { supabase } from '@/integrations/supabase/client';
 import { runFullAnalysis, calculateRiskProfile, BiasResult, Trade } from '@/lib/biasDetection';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -9,6 +10,7 @@ import { Brain, AlertTriangle, CheckCircle, Loader2, RefreshCw, TrendingUp, Zap,
 import { useToast } from '@/hooks/use-toast';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip, RadialBarChart, RadialBar } from 'recharts';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { translateUiText } from '@/lib/translations';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const FALLBACK_BIAS_SCORE = 50;
@@ -72,6 +74,7 @@ const biasIcons: Record<string, typeof Brain> = {
 
 export default function BiasAnalysis() {
   const { user } = useAuth();
+  const { language } = useLanguage();
   const { toast } = useToast();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [results, setResults] = useState<BiasResult[]>([]);
@@ -88,7 +91,7 @@ export default function BiasAnalysis() {
       supabase.from('trades').select('*').eq('user_id', user.id).order('timestamp', { ascending: true }),
       supabase.from('bias_analyses').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
     ]);
-    setTrades((tradesRes.data || []).map((t: Record<string, unknown>) => ({
+    const loadedTrades = (tradesRes.data || []).map((t: Record<string, unknown>) => ({
       timestamp: t.timestamp as string,
       action: t.action as 'buy' | 'sell',
       asset: t.asset as string,
@@ -98,14 +101,22 @@ export default function BiasAnalysis() {
       pnl: t.pnl != null ? Number(t.pnl) : undefined,
       account_balance: t.account_balance != null ? Number(t.account_balance) : undefined,
       notes: t.notes as string | undefined,
-    })));
-    setSavedResults((biasRes.data || []).map((s: Record<string, unknown>) => ({
-      analysis_type: s.analysis_type as string,
-      severity: s.severity as string,
-      title: s.title as string,
-      description: s.description as string,
-      details: (s.details as Record<string, unknown>) || {},
-    })));
+    }));
+    setTrades(loadedTrades);
+
+    if (loadedTrades.length === 0) {
+      setSavedResults([]);
+      setResults([]);
+      setApiResult(null);
+    } else {
+      setSavedResults((biasRes.data || []).map((s: Record<string, unknown>) => ({
+        analysis_type: s.analysis_type as string,
+        severity: s.severity as string,
+        title: s.title as string,
+        description: s.description as string,
+        details: (s.details as Record<string, unknown>) || {},
+      })));
+    }
     setLoading(false);
   }, [user]);
 
@@ -210,9 +221,10 @@ export default function BiasAnalysis() {
   }, {} as Record<string, number>);
 
   const radarData = BIAS_AXES.map((axis) => ({
-    bias: axis.label,
+    bias: translateUiText(axis.label, language),
     score: radarScoreByType[axis.key] ?? 0,
   }));
+  const scoreSeriesLabel = translateUiText('Score', language);
 
   // Aggregate bias score 0–100 (median of bias scores so one severe bias doesn't force overall to 100)
   const biasScore = (() => {
@@ -309,7 +321,7 @@ export default function BiasAnalysis() {
                   <RadialBarChart
                     innerRadius="60%"
                     outerRadius="100%"
-                    data={[{ name: 'Score', value: biasScore, fill: 'hsl(var(--primary))' }]}
+                    data={[{ name: scoreSeriesLabel, value: biasScore, fill: 'hsl(var(--primary))' }]}
                     startAngle={180}
                     endAngle={0}
                   >
@@ -340,7 +352,7 @@ export default function BiasAnalysis() {
                     key={hour}
                     className="h-8 w-8 rounded flex items-center justify-center text-[10px] font-medium text-foreground/80"
                     style={{ backgroundColor: `hsl(var(--primary) / ${0.15 + (count / maxCount) * 0.85})` }}
-                    title={`${hour}:00 – ${count} trade(s)`}
+                    title={`${hour}:00 - ${count} ${language === 'fr' ? 'transactions' : 'trades'}`}
                   >
                     {count > 0 ? count : ''}
                   </div>
@@ -367,8 +379,11 @@ export default function BiasAnalysis() {
                     <PolarGrid gridType="polygon" stroke="hsl(var(--border))" />
                     <PolarAngleAxis dataKey="bias" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }} />
                     <PolarRadiusAxis domain={[0, 100]} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} />
-                    <Radar name="Score" dataKey="score" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={2} />
-                    <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} />
+                    <Radar name={scoreSeriesLabel} dataKey="score" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.2} strokeWidth={2} />
+                    <Tooltip
+                      formatter={(value: number) => [value, scoreSeriesLabel]}
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }}
+                    />
                   </RadarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -525,3 +540,4 @@ export default function BiasAnalysis() {
     </AppLayout>
   );
 }
+

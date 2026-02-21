@@ -2,9 +2,11 @@ import { useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, BarChart, Bar } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useLanguage, type AppLanguage } from '@/hooks/useLanguage';
 import { formatMoney } from '@/lib/format';
 import type { CoachInsights } from '@/lib/coachInsights';
 import { insightDayName } from '@/lib/coachInsights';
+import { translateUiText } from '@/lib/translations';
 
 type CoachInsightsPanelProps = {
   insights: CoachInsights | null;
@@ -12,7 +14,7 @@ type CoachInsightsPanelProps = {
   compact?: boolean;
 };
 
-function Heatmap({ insights }: { insights: CoachInsights }) {
+function Heatmap({ insights, language }: { insights: CoachInsights; language: AppLanguage }) {
   const { maxCount, countMap } = useMemo(() => {
     const map = new Map<string, number>();
     let max = 0;
@@ -23,12 +25,13 @@ function Heatmap({ insights }: { insights: CoachInsights }) {
     });
     return { maxCount: max, countMap: map };
   }, [insights]);
+  const tradesNoun = language === 'fr' ? 'transactions' : 'trades';
 
   return (
     <div className="space-y-1.5">
       {Array.from({ length: 7 }).map((_, day) => (
         <div key={day} className="grid grid-cols-[32px_1fr] items-center gap-1.5">
-          <p className="text-[10px] text-muted-foreground">{insightDayName(day)}</p>
+          <p className="text-[10px] text-muted-foreground">{insightDayName(day, language)}</p>
           <div className="grid gap-[2px]" style={{ gridTemplateColumns: 'repeat(24, minmax(0, 1fr))' }}>
             {Array.from({ length: 24 }).map((_, hour) => {
               const count = countMap.get(`${day}-${hour}`) || 0;
@@ -37,7 +40,7 @@ function Heatmap({ insights }: { insights: CoachInsights }) {
               return (
                 <div
                   key={`${day}-${hour}`}
-                  title={`${insightDayName(day)} ${hour}:00 - ${count} trades`}
+                  title={`${insightDayName(day, language)} ${hour}:00 - ${count} ${tradesNoun}`}
                   className="h-3 rounded-[2px]"
                   style={{ backgroundColor: `hsl(var(--primary) / ${opacity})` }}
                 />
@@ -56,6 +59,10 @@ function Heatmap({ insights }: { insights: CoachInsights }) {
 }
 
 export default function CoachInsightsPanel({ insights, loading = false, compact = false }: CoachInsightsPanelProps) {
+  const { language } = useLanguage();
+  const cumulativePnlSeriesLabel = translateUiText('Cumulative P/L', language);
+  const tradesSeriesLabel = language === 'fr' ? 'Transactions' : 'Trades';
+
   if (loading) {
     return (
       <Card className="glass-card">
@@ -124,7 +131,7 @@ export default function CoachInsightsPanel({ insights, loading = false, compact 
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="date" hide={compact} />
                   <YAxis width={48} tickFormatter={(value) => `${Math.round(Number(value))}`} />
-                  <Tooltip formatter={(value: number) => [formatMoney(value), 'Cumulative P/L']} />
+                  <Tooltip formatter={(value: number) => [formatMoney(value), cumulativePnlSeriesLabel]} />
                   <Line type="monotone" dataKey="cumulativePnl" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
@@ -141,7 +148,7 @@ export default function CoachInsightsPanel({ insights, loading = false, compact 
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="asset" hide={compact} />
                   <YAxis width={30} />
-                  <Tooltip formatter={(value: number) => [value, 'Trades']} />
+                  <Tooltip formatter={(value: number) => [value, tradesSeriesLabel]} />
                   <Bar dataKey="trades" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -153,7 +160,7 @@ export default function CoachInsightsPanel({ insights, loading = false, compact 
 
         <div className="rounded-md border border-border p-2">
           <p className="text-xs font-semibold mb-2">Trading Heatmap (Day x Hour)</p>
-          <Heatmap insights={insights} />
+          <Heatmap insights={insights} language={language} />
         </div>
 
         <div>
