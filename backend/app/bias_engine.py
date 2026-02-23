@@ -405,25 +405,50 @@ def detect_overconfidence_bias(df: pl.DataFrame) -> tuple[dict[str, Any] | None,
         pl.int_range(0, n).alias("_row_idx"),
     )
 
-    base_mask = (
-        (pl.col("_prev_pnl") > 0)
-        & pl.col("_prev_notional").is_finite()
+    valid_mask = (
+        pl.col("_prev_notional").is_finite()
         & (pl.col("_prev_notional") > 0)
         & pl.col("_notional").is_finite()
         & (pl.col("_notional") > 0)
     )
-    upsize_mask = base_mask & (pl.col("_notional") >= 1.35 * pl.col("_prev_notional"))
-    rapid_mask = (
-        base_mask
+    win_base_mask = valid_mask & (pl.col("_prev_pnl") > 0)
+    loss_base_mask = valid_mask & (pl.col("_prev_pnl") < 0)
+    win_upsize_mask = win_base_mask & (pl.col("_notional") >= 1.45 * pl.col("_prev_notional"))
+    loss_upsize_mask = loss_base_mask & (pl.col("_notional") >= 1.45 * pl.col("_prev_notional"))
+    win_rapid_mask = (
+        win_base_mask
         & (pl.col("_dt_sec") > 0)
         & (pl.col("_dt_sec") <= 45 * 60)
-        & (pl.col("_notional") >= 1.2 * pl.col("_prev_notional"))
+        & (pl.col("_notional") >= 1.35 * pl.col("_prev_notional"))
+    )
+    loss_rapid_mask = (
+        loss_base_mask
+        & (pl.col("_dt_sec") > 0)
+        & (pl.col("_dt_sec") <= 45 * 60)
+        & (pl.col("_notional") >= 1.35 * pl.col("_prev_notional"))
     )
 
-    upsize_count = df_oc.filter(upsize_mask).height
-    rapid_count = df_oc.filter(rapid_mask).height
-    upsize_indices = df_oc.filter(upsize_mask).select("_row_idx").to_series().to_list()
-    rapid_indices = df_oc.filter(rapid_mask).select("_row_idx").to_series().to_list()
+    opportunities_win = df_oc.filter(win_base_mask).height
+    opportunities_loss = df_oc.filter(loss_base_mask).height
+    if opportunities_win < 10 or opportunities_loss < 10:
+        return None, []
+
+    upsize_after_win_count = df_oc.filter(win_upsize_mask).height
+    upsize_after_loss_count = df_oc.filter(loss_upsize_mask).height
+    rapid_upsize_after_win_count = df_oc.filter(win_rapid_mask).height
+    rapid_upsize_after_loss_count = df_oc.filter(loss_rapid_mask).height
+
+    win_upsize_rate = upsize_after_win_count / max(opportunities_win, 1)
+    loss_upsize_rate = upsize_after_loss_count / max(opportunities_loss, 1)
+    rapid_win_upsize_rate = rapid_upsize_after_win_count / max(opportunities_win, 1)
+    rapid_loss_upsize_rate = rapid_upsize_after_loss_count / max(opportunities_loss, 1)
+    upsize_edge = win_upsize_rate - loss_upsize_rate
+    rapid_edge = rapid_win_upsize_rate - rapid_loss_upsize_rate
+    if upsize_edge <= 0.05 and rapid_edge <= 0.05:
+        return None, []
+
+    upsize_indices = df_oc.filter(win_upsize_mask).select("_row_idx").to_series().to_list()
+    rapid_indices = df_oc.filter(win_rapid_mask).select("_row_idx").to_series().to_list()
     biased_indices = sorted(list(set(upsize_indices) | set(rapid_indices)))
 
     closed_count = df.filter(pl.col(COL_PNL).is_not_null()).height
@@ -432,8 +457,11 @@ def detect_overconfidence_bias(df: pl.DataFrame) -> tuple[dict[str, Any] | None,
     wins_count = df.filter(pl.col(COL_PNL) > 0).height
     win_rate = wins_count / closed_count
 
-    score = min(100, upsize_count * 14 + rapid_count * 12 + max(0.0, (win_rate - 0.55) * 100))
-    if score < 15:
+    score = min(
+        100,
+        max(0.0, upsize_edge * 240) + max(0.0, rapid_edge * 180) + max(0.0, (win_rate - 0.55) * 40),
+    )
+    if score < 18:
         return None, []
 
     severity = "critical" if score > 75 else "high" if score > 50 else "medium" if score > 30 else "low"
@@ -442,12 +470,23 @@ def detect_overconfidence_bias(df: pl.DataFrame) -> tuple[dict[str, Any] | None,
         "severity": severity,
         "title": "Overconfidence Bias",
         "description": (
-            f"{upsize_count} trade(s) were materially upsized after wins, including {rapid_count} rapid re-entries "
-            f"within 45 minutes. This may indicate confidence drift after recent success."
+            f"Position size expansion is materially higher after wins ({win_upsize_rate * 100:.1f}%) "
+            f"than after losses ({loss_upsize_rate * 100:.1f}%), with rapid post-win upsizing at "
+            f"{rapid_win_upsize_rate * 100:.1f}%. This may indicate confidence drift after recent success."
         ),
         "details": {
-            "upsize_after_win_count": upsize_count,
-            "rapid_upsize_after_win_count": rapid_count,
+            "opportunities_after_win": opportunities_win,
+            "opportunities_after_loss": opportunities_loss,
+            "upsize_after_win_count": upsize_after_win_count,
+            "upsize_after_loss_count": upsize_after_loss_count,
+            "rapid_upsize_after_win_count": rapid_upsize_after_win_count,
+            "rapid_upsize_after_loss_count": rapid_upsize_after_loss_count,
+            "win_upsize_rate_pct": round(win_upsize_rate * 100, 2),
+            "loss_upsize_rate_pct": round(loss_upsize_rate * 100, 2),
+            "rapid_win_upsize_rate_pct": round(rapid_win_upsize_rate * 100, 2),
+            "rapid_loss_upsize_rate_pct": round(rapid_loss_upsize_rate * 100, 2),
+            "upsize_edge_pct": round(upsize_edge * 100, 2),
+            "rapid_edge_pct": round(rapid_edge * 100, 2),
             "win_rate_pct": round(win_rate * 100, 2),
             "closed_trade_count": closed_count,
         },

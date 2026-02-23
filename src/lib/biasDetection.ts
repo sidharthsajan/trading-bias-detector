@@ -216,32 +216,53 @@ export function detectOverconfidenceBias(trades: Trade[]): BiasResult | null {
   if (trades.length < 8 || closedTrades.length < 5) return null;
 
   const sorted = [...trades].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  let opportunitiesAfterWin = 0;
+  let opportunitiesAfterLoss = 0;
   let upsizeAfterWin = 0;
+  let upsizeAfterLoss = 0;
   let rapidUpsizeAfterWin = 0;
+  let rapidUpsizeAfterLoss = 0;
 
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1];
     const curr = sorted[i];
 
-    if (prev.pnl == null || prev.pnl <= 0) continue;
-
     const prevNotional = Math.abs(prev.quantity * prev.entry_price);
     const currNotional = Math.abs(curr.quantity * curr.entry_price);
     if (!Number.isFinite(prevNotional) || !Number.isFinite(currNotional) || prevNotional <= 0 || currNotional <= 0) continue;
 
-    if (currNotional >= prevNotional * 1.35) {
-      upsizeAfterWin++;
-    }
-
     const timeDiff = new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime();
-    if (timeDiff > 0 && timeDiff <= 45 * 60 * 1000 && currNotional >= prevNotional * 1.2) {
-      rapidUpsizeAfterWin++;
+    const isUpsized = currNotional >= prevNotional * 1.45;
+    const isRapidUpsized = timeDiff > 0 && timeDiff <= 45 * 60 * 1000 && currNotional >= prevNotional * 1.35;
+
+    if (prev.pnl != null && prev.pnl > 0) {
+      opportunitiesAfterWin++;
+      if (isUpsized) upsizeAfterWin++;
+      if (isRapidUpsized) rapidUpsizeAfterWin++;
+    } else if (prev.pnl != null && prev.pnl < 0) {
+      opportunitiesAfterLoss++;
+      if (isUpsized) upsizeAfterLoss++;
+      if (isRapidUpsized) rapidUpsizeAfterLoss++;
     }
   }
 
+  if (opportunitiesAfterWin < 10 || opportunitiesAfterLoss < 10) return null;
+
   const winRate = closedTrades.filter((t) => (t.pnl || 0) > 0).length / closedTrades.length;
-  const score = Math.min(100, (upsizeAfterWin * 14) + (rapidUpsizeAfterWin * 12) + Math.max(0, (winRate - 0.55) * 100));
-  if (score < 15) return null;
+  const winUpsizeRate = upsizeAfterWin / opportunitiesAfterWin;
+  const lossUpsizeRate = upsizeAfterLoss / opportunitiesAfterLoss;
+  const rapidWinUpsizeRate = rapidUpsizeAfterWin / opportunitiesAfterWin;
+  const rapidLossUpsizeRate = rapidUpsizeAfterLoss / opportunitiesAfterLoss;
+  const upsizeEdge = winUpsizeRate - lossUpsizeRate;
+  const rapidEdge = rapidWinUpsizeRate - rapidLossUpsizeRate;
+
+  if (upsizeEdge <= 0.05 && rapidEdge <= 0.05) return null;
+
+  const score = Math.min(
+    100,
+    Math.max(0, upsizeEdge * 240) + Math.max(0, rapidEdge * 180) + Math.max(0, (winRate - 0.55) * 40),
+  );
+  if (score < 18) return null;
 
   const severity = score > 75 ? 'critical' : score > 50 ? 'high' : score > 30 ? 'medium' : 'low';
 
@@ -249,10 +270,20 @@ export function detectOverconfidenceBias(trades: Trade[]): BiasResult | null {
     type: 'overconfidence',
     severity,
     title: 'Overconfidence Bias',
-    description: `${upsizeAfterWin} trade(s) were materially upsized after wins, including ${rapidUpsizeAfterWin} rapid re-entries within 45 minutes. This may indicate confidence drift after recent success.`,
+    description: `Position size expansion is materially higher after wins (${(winUpsizeRate * 100).toFixed(1)}%) than after losses (${(lossUpsizeRate * 100).toFixed(1)}%), with rapid post-win upsizing at ${(rapidWinUpsizeRate * 100).toFixed(1)}%. This may indicate confidence drift after recent success.`,
     details: {
+      opportunitiesAfterWin,
+      opportunitiesAfterLoss,
       upsizeAfterWin,
+      upsizeAfterLoss,
       rapidUpsizeAfterWin,
+      rapidUpsizeAfterLoss,
+      winUpsizeRatePct: Math.round(winUpsizeRate * 1000) / 10,
+      lossUpsizeRatePct: Math.round(lossUpsizeRate * 1000) / 10,
+      rapidWinUpsizeRatePct: Math.round(rapidWinUpsizeRate * 1000) / 10,
+      rapidLossUpsizeRatePct: Math.round(rapidLossUpsizeRate * 1000) / 10,
+      upsizeEdgePct: Math.round(upsizeEdge * 1000) / 10,
+      rapidEdgePct: Math.round(rapidEdge * 1000) / 10,
       winRate: Math.round(winRate * 100),
       closedTrades: closedTrades.length,
     },
