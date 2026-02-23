@@ -25,24 +25,38 @@ CSV_HEADER_MAP = {
     "time": COL_TIMESTAMP,
     "datetime": COL_TIMESTAMP,
     "buy/sell": COL_ACTION,
+    "buy_sell": COL_ACTION,
+    "buy-sell": COL_ACTION,
     "action": COL_ACTION,
     "side": COL_ACTION,
+    "direction": COL_ACTION,
     "type": COL_ACTION,
     "asset": COL_ASSET,
+    "instrument": COL_ASSET,
     "symbol": COL_ASSET,
     "ticker": COL_ASSET,
+    "stock": COL_ASSET,
     "quantity": COL_QUANTITY,
     "qty": COL_QUANTITY,
     "amount": COL_QUANTITY,
     "shares": COL_QUANTITY,
     "price": COL_PRICE,
+    "entry price": COL_PRICE,
     "entry_price": COL_PRICE,
+    "open_price": COL_PRICE,
+    "open": COL_PRICE,
     "p/l": COL_PNL,
     "pl": COL_PNL,
     "pnl": COL_PNL,
     "profit": COL_PNL,
+    "profit_loss": COL_PNL,
+    "profit/loss": COL_PNL,
+    "realized_pnl": COL_PNL,
+    "realized p/l": COL_PNL,
+    "p&l": COL_PNL,
     "balance": COL_BALANCE,
     "account_balance": COL_BALANCE,
+    "account": COL_BALANCE,
 }
 
 # Cap rows returned in /analyze response to avoid huge JSON and frontend DOM crash
@@ -65,20 +79,41 @@ def parse_csv_to_dataframe(csv_bytes: bytes) -> pl.DataFrame:
         missing = required - set(df.columns)
         raise ValueError(f"Missing required columns: {missing}")
 
-    # Ensure timestamp is datetime
-    df = df.with_columns(pl.col(COL_TIMESTAMP).str.to_datetime(time_zone=None))
-    # Normalize action to buy/sell
-    action_col = pl.col(COL_ACTION).cast(pl.Utf8).str.to_lowercase()
+    # Ensure timestamp is datetime across common export formats.
+    timestamp_raw = pl.col(COL_TIMESTAMP).cast(pl.Utf8, strict=False).str.strip_chars()
     df = df.with_columns(
-        pl.when(action_col.is_in(["buy", "b"]))
+        pl.coalesce(
+            [
+                timestamp_raw.str.to_datetime(time_zone=None, strict=False),
+                timestamp_raw.str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False),
+                timestamp_raw.str.strptime(pl.Datetime, "%Y-%m-%dT%H:%M:%S", strict=False),
+                timestamp_raw.str.strptime(pl.Datetime, "%m/%d/%Y %H:%M:%S", strict=False),
+                timestamp_raw.str.strptime(pl.Datetime, "%m/%d/%Y %I:%M:%S %p", strict=False),
+                timestamp_raw.str.strptime(pl.Datetime, "%Y-%m-%d", strict=False),
+            ]
+        ).alias(COL_TIMESTAMP)
+    )
+    # Normalize action to buy/sell
+    action_col = pl.col(COL_ACTION).cast(pl.Utf8, strict=False).str.strip_chars().str.to_lowercase()
+    df = df.with_columns(
+        pl.when(action_col.is_in(["buy", "b", "bot", "long", "cover"]))
         .then(pl.lit("buy"))
-        .otherwise(pl.lit("sell"))
+        .when(action_col.is_in(["sell", "s", "sld", "short"]))
+        .then(pl.lit("sell"))
+        .otherwise(pl.lit(None))
         .alias(COL_ACTION)
     )
     # Numerics
     for col in (COL_QUANTITY, COL_PRICE, COL_PNL, COL_BALANCE):
         if col in df.columns:
-            df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
+            df = df.with_columns(
+                pl.col(col)
+                .cast(pl.Utf8, strict=False)
+                .str.strip_chars()
+                .str.replace_all(r"[\$,]", "")
+                .cast(pl.Float64, strict=False)
+                .alias(col)
+            )
     # Sort by time for all detectors
     df = df.sort(COL_TIMESTAMP)
     return df
@@ -169,14 +204,15 @@ def detect_overtrading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[in
     overtrading_by_freq = max_per_hour > 5
 
     # >10% of balance per ticket: notional = quantity * price; flag if notional > 0.1 * balance
-    biased_indices: list[int] = []
+    over_balance_indices: list[int] = []
+    freq_indices: list[int] = []
     if COL_BALANCE in df.columns:
         notional = pl.col(COL_QUANTITY) * pl.col(COL_PRICE)
         pct_balance = notional / pl.col(COL_BALANCE).replace(0.0, None)
         df_with_pct = df.with_columns(pct_balance.alias("_pct_bal")).with_columns(
             pl.int_range(0, n).alias("_row_idx")
         )
-        biased_indices = (
+        over_balance_indices = (
             df_with_pct.filter((pl.col("_pct_bal") > 0.1) & pl.col("_pct_bal").is_finite())
             .select("_row_idx")
             .to_series()
@@ -190,7 +226,7 @@ def detect_overtrading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[in
             .to_series()
             .to_list()
         )
-        biased_indices = list(set(biased_indices) | set(freq_indices))
+    biased_indices = list(set(over_balance_indices) | set(freq_indices))
 
     # Score relative to dataset: compare max_per_hour to mean trades per hour in this dataset
     mean_per_hour = hourly["len"].mean()
@@ -202,7 +238,7 @@ def detect_overtrading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[in
     if freq_ratio > 1.0:
         score += min(50, (freq_ratio - 1.0) * 25)  # ratio 3 -> 50, ratio 5 -> 100
     # Balance component: what share of trades exceeded 10% of balance?
-    pct_over_balance = len(biased_indices) / max(n, 1)
+    pct_over_balance = len(over_balance_indices) / max(n, 1)
     score += min(50, pct_over_balance * 250)  # 20% of trades -> 50
     score = min(100, score)
     if score < 15:
@@ -214,10 +250,16 @@ def detect_overtrading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[in
         "severity": severity,
         "title": "Overtrading Detected",
         "description": f"Trade frequency reached {int(max_per_hour)} trades per hour (threshold 5). "
-        + (f"{len(biased_indices)} trade(s) exceeded 10% of balance per ticket." if biased_indices else ""),
+        + (
+            f"{len(over_balance_indices)} trade(s) exceeded 10% of balance per ticket."
+            if over_balance_indices
+            else ""
+        ),
         "details": {
             "max_trades_per_hour": int(max_per_hour),
             "mean_trades_per_hour": round(float(mean_per_hour), 2),
+            "high_frequency_trade_count": len(freq_indices),
+            "over_10pct_balance_trade_count": len(over_balance_indices),
             "biased_trade_count": len(biased_indices),
         },
         "score": round(score),
@@ -340,6 +382,153 @@ def detect_revenge_trading(df: pl.DataFrame) -> tuple[dict[str, Any] | None, lis
             "revenge_trade_count": count,
             "revenge_rate_pct": round(revenge_rate * 100, 2),
             "total_trades": n,
+        },
+        "score": round(score),
+    }
+    return result, biased_indices
+
+
+def detect_overconfidence_bias(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[int]]:
+    """
+    Detect overconfidence as position-size escalation after wins, especially rapid re-entries.
+    """
+    if COL_PNL not in df.columns or df.height < 8:
+        return None, []
+
+    n = df.height
+    notional_expr = (pl.col(COL_QUANTITY).abs() * pl.col(COL_PRICE).abs())
+    df_oc = df.with_columns(
+        notional_expr.alias("_notional"),
+        pl.col(COL_PNL).shift(1).alias("_prev_pnl"),
+        notional_expr.shift(1).alias("_prev_notional"),
+        (pl.col(COL_TIMESTAMP).dt.epoch(time_unit="s") - pl.col(COL_TIMESTAMP).dt.epoch(time_unit="s").shift(1)).alias("_dt_sec"),
+        pl.int_range(0, n).alias("_row_idx"),
+    )
+
+    base_mask = (
+        (pl.col("_prev_pnl") > 0)
+        & pl.col("_prev_notional").is_finite()
+        & (pl.col("_prev_notional") > 0)
+        & pl.col("_notional").is_finite()
+        & (pl.col("_notional") > 0)
+    )
+    upsize_mask = base_mask & (pl.col("_notional") >= 1.35 * pl.col("_prev_notional"))
+    rapid_mask = (
+        base_mask
+        & (pl.col("_dt_sec") > 0)
+        & (pl.col("_dt_sec") <= 45 * 60)
+        & (pl.col("_notional") >= 1.2 * pl.col("_prev_notional"))
+    )
+
+    upsize_count = df_oc.filter(upsize_mask).height
+    rapid_count = df_oc.filter(rapid_mask).height
+    upsize_indices = df_oc.filter(upsize_mask).select("_row_idx").to_series().to_list()
+    rapid_indices = df_oc.filter(rapid_mask).select("_row_idx").to_series().to_list()
+    biased_indices = sorted(list(set(upsize_indices) | set(rapid_indices)))
+
+    closed_count = df.filter(pl.col(COL_PNL).is_not_null()).height
+    if closed_count == 0:
+        return None, []
+    wins_count = df.filter(pl.col(COL_PNL) > 0).height
+    win_rate = wins_count / closed_count
+
+    score = min(100, upsize_count * 14 + rapid_count * 12 + max(0.0, (win_rate - 0.55) * 100))
+    if score < 15:
+        return None, []
+
+    severity = "critical" if score > 75 else "high" if score > 50 else "medium" if score > 30 else "low"
+    result = {
+        "type": "overconfidence",
+        "severity": severity,
+        "title": "Overconfidence Bias",
+        "description": (
+            f"{upsize_count} trade(s) were materially upsized after wins, including {rapid_count} rapid re-entries "
+            f"within 45 minutes. This may indicate confidence drift after recent success."
+        ),
+        "details": {
+            "upsize_after_win_count": upsize_count,
+            "rapid_upsize_after_win_count": rapid_count,
+            "win_rate_pct": round(win_rate * 100, 2),
+            "closed_trade_count": closed_count,
+        },
+        "score": round(score),
+    }
+    return result, biased_indices
+
+
+def detect_concentration_bias(df: pl.DataFrame) -> tuple[dict[str, Any] | None, list[int]]:
+    """
+    Detect concentration bias when trading activity is overly focused on one or two assets.
+    """
+    if df.height < 10:
+        return None, []
+
+    n = df.height
+    grouped = (
+        df.group_by(COL_ASSET)
+        .agg(
+            pl.len().alias("_count"),
+            (pl.col(COL_QUANTITY).abs() * pl.col(COL_PRICE).abs()).sum().alias("_notional"),
+        )
+        .sort("_count", descending=True)
+    )
+    if grouped.height == 0:
+        return None, []
+
+    top_row = grouped.row(0, named=True)
+    top_asset = str(top_row[COL_ASSET])
+    top_count = int(top_row["_count"])
+    second_count = int(grouped.row(1, named=True)["_count"]) if grouped.height > 1 else 0
+
+    top_share = top_count / max(n, 1)
+    top_two_share = (top_count + second_count) / max(n, 1)
+    if top_share < 0.45 and top_two_share < 0.75:
+        return None, []
+
+    unique_assets = grouped.height
+    diversity_penalty = (4 - unique_assets) * 8 if unique_assets <= 3 else 0
+    score = min(100, max(0.0, (top_share - 0.4) * 130 + (top_two_share - 0.65) * 90 + diversity_penalty))
+    if score < 15:
+        return None, []
+
+    top_notional = float(top_row["_notional"] or 0.0)
+    total_notional = float(grouped.select(pl.col("_notional").sum()).item() or 0.0)
+    top_notional_share = top_notional / max(total_notional, 1.0)
+
+    focused_assets = [top_asset]
+    if top_two_share >= 0.75 and grouped.height > 1:
+        focused_assets.append(str(grouped.row(1, named=True)[COL_ASSET]))
+
+    df_idx = df.with_columns(pl.int_range(0, n).alias("_row_idx"))
+    biased_indices = (
+        df_idx.filter(pl.col(COL_ASSET).is_in(focused_assets))
+        .select("_row_idx")
+        .to_series()
+        .to_list()
+    )
+
+    severity = "critical" if score > 75 else "high" if score > 50 else "medium" if score > 30 else "low"
+    result = {
+        "type": "concentration_bias",
+        "severity": severity,
+        "title": "Concentration Bias",
+        "description": (
+            f"{top_share * 100:.1f}% of trades are concentrated in {top_asset}"
+            + (
+                f", and top-2 assets account for {top_two_share * 100:.1f}% of activity."
+                if top_two_share >= 0.75
+                else "."
+            )
+            + " This concentration can increase idiosyncratic risk."
+        ),
+        "details": {
+            "top_asset": top_asset,
+            "top_asset_trade_count": top_count,
+            "top_asset_share_pct": round(top_share * 100, 2),
+            "top_two_assets_share_pct": round(top_two_share * 100, 2),
+            "top_asset_notional_share_pct": round(top_notional_share * 100, 2),
+            "focused_asset_count": len(focused_assets),
+            "unique_assets": unique_assets,
         },
         "score": round(score),
     }
@@ -561,6 +750,8 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
                 "overtrading": [],
                 "loss_aversion": [],
                 "revenge_trading": [],
+                "overconfidence": [],
+                "concentration_bias": [],
                 "disposition_effect": [],
                 "anchoring": [],
                 "confirmation_bias": [],
@@ -598,6 +789,8 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
     ot_result, ot_indices = detect_overtrading(df)
     la_result, la_indices = detect_loss_aversion(df)
     rv_result, rv_indices = detect_revenge_trading(df)
+    oc_result, oc_indices = detect_overconfidence_bias(df)
+    cb_result, cb_indices = detect_concentration_bias(df)
     dp_result, dp_indices = detect_disposition_effect(df)
     an_result, an_indices = detect_anchoring_bias(df)
     cf_result, cf_indices = detect_confirmation_bias(df)
@@ -609,6 +802,10 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
         biases.append(la_result)
     if rv_result:
         biases.append(rv_result)
+    if oc_result:
+        biases.append(oc_result)
+    if cb_result:
+        biases.append(cb_result)
     if dp_result:
         biases.append(dp_result)
     if an_result:
@@ -631,6 +828,8 @@ def run_analysis(df: pl.DataFrame) -> dict[str, Any]:
         "overtrading": ot_indices,
         "loss_aversion": la_indices,
         "revenge_trading": rv_indices,
+        "overconfidence": oc_indices,
+        "concentration_bias": cb_indices,
         "disposition_effect": dp_indices,
         "anchoring": an_indices,
         "confirmation_bias": cf_indices,

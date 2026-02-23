@@ -33,4 +33,4 @@ If you use a different port, set `VITE_API_URL=http://localhost:8001` in the fro
 
 - `GET /` - health
 - `POST /analyze` - upload CSV (Timestamp, Buy/Sell, Asset, Quantity, Price, P/L, Balance); returns `biases`, `trade_flags`, `bias_score`, `trades`.
-  Biases include `overtrading`, `loss_aversion`, `revenge_trading`, `disposition_effect`, `anchoring`, and `confirmation_bias`.
+  Biases include `overtrading`, `loss_aversion`, `revenge_trading`, `overconfidence`, `concentration_bias`, `disposition_effect`, `anchoring`, and `confirmation_bias`.

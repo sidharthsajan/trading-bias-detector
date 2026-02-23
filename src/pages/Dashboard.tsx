@@ -25,6 +25,8 @@ const BIAS_AXES = [
   { key: 'overtrading', label: 'Overtrading' },
   { key: 'loss_aversion', label: 'Loss Aversion' },
   { key: 'revenge_trading', label: 'Revenge Trading' },
+  { key: 'overconfidence', label: 'Overconfidence' },
+  { key: 'concentration_bias', label: 'Concentration Bias' },
   { key: 'disposition_effect', label: 'Disposition Effect' },
   { key: 'anchoring', label: 'Anchoring' },
   { key: 'confirmation_bias', label: 'Confirmation Bias' },
@@ -376,7 +378,7 @@ export default function Dashboard() {
 
             <Card className="glass-card">
               <CardHeader>
-                <CardTitle className="font-display">Bias Radar (6-Factor)</CardTitle>
+                <CardTitle className="font-display">Bias Radar (8-Factor)</CardTitle>
               </CardHeader>
               <CardContent>
                 {hasRadarData ? (

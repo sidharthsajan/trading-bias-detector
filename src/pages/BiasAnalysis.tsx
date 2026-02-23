@@ -14,10 +14,18 @@ import { translateUiText } from '@/lib/translations';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const FALLBACK_BIAS_SCORE = 50;
+const FALLBACK_SCORE_BY_SEVERITY: Record<BiasResult['severity'], number> = {
+  low: 20,
+  medium: 45,
+  high: 70,
+  critical: 90,
+};
 const BIAS_AXES = [
   { key: 'overtrading', label: 'Overtrading' },
   { key: 'loss_aversion', label: 'Loss Aversion' },
   { key: 'revenge_trading', label: 'Revenge Trading' },
+  { key: 'overconfidence', label: 'Overconfidence' },
+  { key: 'concentration_bias', label: 'Concentration Bias' },
   { key: 'disposition_effect', label: 'Disposition Effect' },
   { key: 'anchoring', label: 'Anchoring' },
   { key: 'confirmation_bias', label: 'Confirmation Bias' },
@@ -36,6 +44,8 @@ export interface AnalyzeResponse {
     overtrading: number[];
     loss_aversion: number[];
     revenge_trading: number[];
+    overconfidence: number[];
+    concentration_bias: number[];
     disposition_effect: number[];
     anchoring: number[];
     confirmation_bias: number[];
@@ -70,6 +80,8 @@ const biasIcons: Record<string, typeof Brain> = {
   overtrading: Zap,
   loss_aversion: TrendingUp,
   revenge_trading: AlertTriangle,
+  overconfidence: TrendingUp,
+  concentration_bias: AlertTriangle,
 };
 
 export default function BiasAnalysis() {
@@ -168,7 +180,7 @@ export default function BiasAnalysis() {
           severity: b.severity,
           title: b.title,
           description: b.description,
-          details: b.details,
+          details: { ...b.details, score: b.score },
         }))
       );
     }
@@ -194,13 +206,15 @@ export default function BiasAnalysis() {
       : savedResults.map(s => {
           const detailsObj = (s.details || {}) as Record<string, unknown>;
           const raw = detailsObj.score;
+          const severity = s.severity as BiasResult['severity'];
+          const severityFallbackScore = FALLBACK_SCORE_BY_SEVERITY[severity] ?? FALLBACK_BIAS_SCORE;
           const score =
             typeof raw === 'number' && Number.isFinite(raw)
               ? Math.max(0, Math.min(100, raw))
-              : (typeof raw === 'string' ? Math.max(0, Math.min(100, Number(raw))) : null) ?? FALLBACK_BIAS_SCORE;
+              : (typeof raw === 'string' ? Math.max(0, Math.min(100, Number(raw))) : null) ?? severityFallbackScore;
           return {
             type: s.analysis_type,
-            severity: s.severity as BiasResult['severity'],
+            severity,
             title: s.title,
             description: s.description,
             details: s.details || {},
@@ -247,6 +261,8 @@ export default function BiasAnalysis() {
     overtrading: [],
     loss_aversion: [],
     revenge_trading: [],
+    overconfidence: [],
+    concentration_bias: [],
     disposition_effect: [],
     anchoring: [],
     confirmation_bias: [],
@@ -255,6 +271,8 @@ export default function BiasAnalysis() {
     ...(tradeFlags.overtrading ?? []),
     ...(tradeFlags.loss_aversion ?? []),
     ...(tradeFlags.revenge_trading ?? []),
+    ...(tradeFlags.overconfidence ?? []),
+    ...(tradeFlags.concentration_bias ?? []),
     ...(tradeFlags.disposition_effect ?? []),
     ...(tradeFlags.anchoring ?? []),
     ...(tradeFlags.confirmation_bias ?? []),
@@ -371,7 +389,7 @@ export default function BiasAnalysis() {
             <Card className="glass-card">
               <CardHeader>
                 <CardTitle className="font-display">Bias Radar</CardTitle>
-                <CardDescription>6-factor bias radar (0-100)</CardDescription>
+                <CardDescription>8-factor bias radar (0-100)</CardDescription>
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={280}>

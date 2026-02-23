@@ -2,6 +2,35 @@
 
 /** Fallback balance when computing "big move" threshold (3%) when account_balance is missing. */
 const DEFAULT_ACCOUNT_BALANCE_FOR_PCT = 10_000;
+const CSV_SPLIT_REGEX = /,(?=(?:[^"]*"[^"]*")*[^"]*$)/;
+
+const parseNumeric = (raw: string | undefined): number | undefined => {
+  if (raw === undefined) return undefined;
+  const cleaned = raw.trim();
+  if (cleaned === '') return undefined;
+  const normalized = cleaned
+    .replace(/^\((.*)\)$/, '-$1')
+    .replace(/[$,%\s]/g, '')
+    .replace(/,/g, '');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const splitCsvRow = (row: string): string[] =>
+  row.split(CSV_SPLIT_REGEX).map((cell) => {
+    const trimmed = cell.trim();
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+      return trimmed.slice(1, -1).replace(/""/g, '"').trim();
+    }
+    return trimmed;
+  });
+
+const normalizeAction = (raw: string | undefined): 'buy' | 'sell' | null => {
+  const value = raw?.trim().toLowerCase();
+  if (value === 'buy' || value === 'b' || value === 'bot' || value === 'long' || value === 'cover') return 'buy';
+  if (value === 'sell' || value === 's' || value === 'sld' || value === 'short') return 'sell';
+  return null;
+};
 
 export interface Trade {
   id?: string;
@@ -44,7 +73,8 @@ export function detectOvertrading(trades: Trade[]): BiasResult | null {
   let tradesAfterBigMove = 0;
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1];
-    if (prev.pnl && Math.abs(prev.pnl) > (prev.account_balance ?? DEFAULT_ACCOUNT_BALANCE_FOR_PCT) * 0.03) {
+    const baselineBalance = Math.max(1, Math.abs(prev.account_balance ?? DEFAULT_ACCOUNT_BALANCE_FOR_PCT));
+    if (prev.pnl != null && Number.isFinite(prev.pnl) && Math.abs(prev.pnl) > baselineBalance * 0.03) {
       const timeDiff = new Date(sorted[i].timestamp).getTime() - new Date(prev.timestamp).getTime();
       if (timeDiff < 3600000) tradesAfterBigMove++;
     }
@@ -90,6 +120,7 @@ export function detectLossAversion(trades: Trade[]): BiasResult | null {
 
   const avgWin = wins.reduce((s, t) => s + (t.pnl || 0), 0) / wins.length;
   const avgLoss = Math.abs(losses.reduce((s, t) => s + (t.pnl || 0), 0) / losses.length);
+  if (avgWin <= 0) return null;
 
   // Check if avg loss > avg win (holding losers, cutting winners)
   const lossWinRatio = avgLoss / avgWin;
@@ -132,7 +163,7 @@ export function detectRevengeTrading(trades: Trade[]): BiasResult | null {
     const prev = sorted[i - 1];
     const curr = sorted[i];
 
-    if (prev.pnl && prev.pnl < 0) {
+    if (prev.pnl != null && prev.pnl < 0) {
       const timeDiff = new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime();
       if (timeDiff < 1800000) { // within 30 min
         revengeInstances++;
@@ -147,7 +178,7 @@ export function detectRevengeTrading(trades: Trade[]): BiasResult | null {
   let consecutiveLosses = 0;
   let bigBetsAfterStreaks = 0;
   for (let i = 0; i < sorted.length; i++) {
-    if (sorted[i].pnl && sorted[i].pnl! < 0) {
+    if (sorted[i].pnl != null && sorted[i].pnl < 0) {
       consecutiveLosses++;
     } else {
       if (consecutiveLosses >= 3 && i < sorted.length - 1) {
@@ -175,6 +206,106 @@ export function detectRevengeTrading(trades: Trade[]): BiasResult | null {
       revengeInstances,
       increasedRiskAfterLoss,
       bigBetsAfterStreaks,
+    },
+    score: Math.round(score),
+  };
+}
+
+export function detectOverconfidenceBias(trades: Trade[]): BiasResult | null {
+  const closedTrades = trades.filter((t) => t.pnl !== null && t.pnl !== undefined);
+  if (trades.length < 8 || closedTrades.length < 5) return null;
+
+  const sorted = [...trades].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  let upsizeAfterWin = 0;
+  let rapidUpsizeAfterWin = 0;
+
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const curr = sorted[i];
+
+    if (prev.pnl == null || prev.pnl <= 0) continue;
+
+    const prevNotional = Math.abs(prev.quantity * prev.entry_price);
+    const currNotional = Math.abs(curr.quantity * curr.entry_price);
+    if (!Number.isFinite(prevNotional) || !Number.isFinite(currNotional) || prevNotional <= 0 || currNotional <= 0) continue;
+
+    if (currNotional >= prevNotional * 1.35) {
+      upsizeAfterWin++;
+    }
+
+    const timeDiff = new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime();
+    if (timeDiff > 0 && timeDiff <= 45 * 60 * 1000 && currNotional >= prevNotional * 1.2) {
+      rapidUpsizeAfterWin++;
+    }
+  }
+
+  const winRate = closedTrades.filter((t) => (t.pnl || 0) > 0).length / closedTrades.length;
+  const score = Math.min(100, (upsizeAfterWin * 14) + (rapidUpsizeAfterWin * 12) + Math.max(0, (winRate - 0.55) * 100));
+  if (score < 15) return null;
+
+  const severity = score > 75 ? 'critical' : score > 50 ? 'high' : score > 30 ? 'medium' : 'low';
+
+  return {
+    type: 'overconfidence',
+    severity,
+    title: 'Overconfidence Bias',
+    description: `${upsizeAfterWin} trade(s) were materially upsized after wins, including ${rapidUpsizeAfterWin} rapid re-entries within 45 minutes. This may indicate confidence drift after recent success.`,
+    details: {
+      upsizeAfterWin,
+      rapidUpsizeAfterWin,
+      winRate: Math.round(winRate * 100),
+      closedTrades: closedTrades.length,
+    },
+    score: Math.round(score),
+  };
+}
+
+export function detectConcentrationBias(trades: Trade[]): BiasResult | null {
+  if (trades.length < 10) return null;
+
+  const assetCounts: Record<string, number> = {};
+  const assetNotional: Record<string, number> = {};
+  trades.forEach((t) => {
+    assetCounts[t.asset] = (assetCounts[t.asset] || 0) + 1;
+    assetNotional[t.asset] = (assetNotional[t.asset] || 0) + Math.abs(t.quantity * t.entry_price);
+  });
+
+  const rankedAssets = Object.entries(assetCounts).sort((a, b) => b[1] - a[1]);
+  if (rankedAssets.length === 0) return null;
+
+  const topAsset = rankedAssets[0][0];
+  const topAssetTrades = rankedAssets[0][1];
+  const secondAssetTrades = rankedAssets[1]?.[1] ?? 0;
+  const topShare = topAssetTrades / trades.length;
+  const topTwoShare = (topAssetTrades + secondAssetTrades) / trades.length;
+
+  if (topShare < 0.45 && topTwoShare < 0.75) return null;
+
+  const uniqueAssets = rankedAssets.length;
+  const diversityPenalty = uniqueAssets <= 3 ? (4 - uniqueAssets) * 8 : 0;
+  const score = Math.min(
+    100,
+    Math.max(0, ((topShare - 0.4) * 130) + ((topTwoShare - 0.65) * 90) + diversityPenalty),
+  );
+  if (score < 15) return null;
+
+  const topNotional = assetNotional[topAsset] || 0;
+  const totalNotional = Math.max(1, Object.values(assetNotional).reduce((sum, value) => sum + value, 0));
+  const topNotionalShare = topNotional / totalNotional;
+  const severity = score > 75 ? 'critical' : score > 50 ? 'high' : score > 30 ? 'medium' : 'low';
+
+  return {
+    type: 'concentration_bias',
+    severity,
+    title: 'Concentration Bias',
+    description: `${(topShare * 100).toFixed(1)}% of trades are concentrated in ${topAsset}${topTwoShare >= 0.75 ? `, and top-2 assets account for ${(topTwoShare * 100).toFixed(1)}% of activity` : ''}. This concentration can increase idiosyncratic risk.`,
+    details: {
+      topAsset,
+      topAssetTrades,
+      topAssetSharePct: Math.round(topShare * 100),
+      topTwoSharePct: Math.round(topTwoShare * 100),
+      topNotionalSharePct: Math.round(topNotionalShare * 100),
+      uniqueAssets,
     },
     score: Math.round(score),
   };
@@ -300,6 +431,8 @@ export function runFullAnalysis(trades: Trade[]): BiasResult[] {
     detectOvertrading,
     detectLossAversion,
     detectRevengeTrading,
+    detectOverconfidenceBias,
+    detectConcentrationBias,
     detectDispositionEffect,
     detectAnchoringBias,
     detectConfirmationBias,
@@ -333,10 +466,10 @@ export function calculateRiskProfile(trades: Trade[], biases: BiasResult[]) {
 }
 
 export function parseCSV(csvText: string): Trade[] {
-  const lines = csvText.trim().split('\n');
+  const lines = csvText.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
 
-  const headers = lines[0].toLowerCase().split(',').map(h => h.trim());
+  const headers = splitCsvRow(lines[0]).map((h) => h.toLowerCase().trim());
 
   const findCol = (names: string[]) => {
     for (const name of names) {
@@ -347,42 +480,31 @@ export function parseCSV(csvText: string): Trade[] {
   };
 
   const timestampIdx = findCol(['timestamp', 'date', 'time', 'datetime']);
-  const actionIdx = findCol(['action', 'buy/sell', 'side', 'type', 'direction']);
+  const actionIdx = findCol(['action', 'buy/sell', 'buy_sell', 'buy-sell', 'side', 'type', 'direction']);
   const assetIdx = findCol(['asset', 'symbol', 'ticker', 'instrument', 'stock']);
   const quantityIdx = findCol(['quantity', 'qty', 'amount', 'shares', 'size']);
-  const entryPriceIdx = findCol(['entry_price', 'entry price', 'price', 'open_price', 'open']);
+  const entryPriceIdx = findCol(['entry_price', 'entry price', 'price', 'open_price', 'open', 'entry']);
   const exitPriceIdx = findCol(['exit_price', 'exit price', 'close_price', 'close']);
-  const pnlIdx = findCol(['pnl', 'p/l', 'profit', 'profit_loss', 'profit/loss', 'pl']);
-  const balanceIdx = findCol(['account_balance', 'balance', 'account']);
+  const pnlIdx = findCol(['pnl', 'p/l', 'profit', 'profit_loss', 'profit/loss', 'realized_pnl', 'realized p/l', 'p&l', 'pl']);
+  const balanceIdx = findCol(['account_balance', 'balance', 'account', 'account value']);
   const notesIdx = findCol(['notes', 'comment', 'comments']);
 
   if (timestampIdx === -1 || actionIdx === -1 || assetIdx === -1) return [];
 
   const trades: Trade[] = [];
 
-  const parseOptionalNumber = (raw: string | undefined): number | undefined => {
-    if (raw === undefined) return undefined;
-    const cleaned = raw.trim();
-    if (cleaned === '') return undefined;
-    const parsed = Number(cleaned);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  };
-
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.trim());
+    const cols = splitCsvRow(lines[i]);
     if (cols.length < 3) continue;
 
-    const actionRaw = cols[actionIdx]?.toLowerCase();
-    let action: 'buy' | 'sell' | null = null;
-    if (actionRaw === 'buy' || actionRaw === 'b') action = 'buy';
-    if (actionRaw === 'sell' || actionRaw === 's') action = 'sell';
+    const action = normalizeAction(cols[actionIdx]);
     if (!action) continue;
 
     const asset = cols[assetIdx]?.trim();
     if (!asset) continue;
 
-    const quantity = quantityIdx !== -1 ? Number(cols[quantityIdx]) : 0;
-    const entryPrice = entryPriceIdx !== -1 ? Number(cols[entryPriceIdx]) : 0;
+    const quantity = quantityIdx !== -1 ? parseNumeric(cols[quantityIdx]) ?? 0 : 0;
+    const entryPrice = entryPriceIdx !== -1 ? parseNumeric(cols[entryPriceIdx]) ?? 0 : 0;
     if (!Number.isFinite(quantity) || !Number.isFinite(entryPrice) || quantity <= 0 || entryPrice <= 0) continue;
 
     trades.push({
@@ -391,9 +513,9 @@ export function parseCSV(csvText: string): Trade[] {
       asset,
       quantity,
       entry_price: entryPrice,
-      exit_price: exitPriceIdx !== -1 ? parseOptionalNumber(cols[exitPriceIdx]) : undefined,
-      pnl: pnlIdx !== -1 ? parseOptionalNumber(cols[pnlIdx]) : undefined,
-      account_balance: balanceIdx !== -1 ? parseOptionalNumber(cols[balanceIdx]) : undefined,
+      exit_price: exitPriceIdx !== -1 ? parseNumeric(cols[exitPriceIdx]) : undefined,
+      pnl: pnlIdx !== -1 ? parseNumeric(cols[pnlIdx]) : undefined,
+      account_balance: balanceIdx !== -1 ? parseNumeric(cols[balanceIdx]) : undefined,
       notes: notesIdx !== -1 ? cols[notesIdx] : undefined,
     });
   }
